@@ -302,11 +302,14 @@ class WordPostprocessTests(unittest.TestCase):
 
             postprocess_docx(docx, WordPostprocessProfile())
             document_xml = read_docx_xml(docx, "word/document.xml")
+            styles_xml = read_docx_xml(docx, "word/styles.xml")
 
-            self.assertIn('<w:pStyle w:val="37"', document_xml)
-            self.assertIn('<w:pStyle w:val="38"', document_xml)
-            self.assertIn('<w:pStyle w:val="39"', document_xml)
+            self.assertIn('<w:pStyle w:val="2"', document_xml)
+            self.assertIn('<w:pStyle w:val="3"', document_xml)
+            self.assertIn('<w:pStyle w:val="4"', document_xml)
             self.assertIn('<w:pStyle w:val="8"', document_xml)
+            self.assertNotIn("<w:numPr", document_xml)
+            self.assertNotIn("<w:numPr", styles_xml)
 
 
 def create_minimal_docx(path: Path, paragraphs: list[tuple[str, str | None]]) -> None:
@@ -320,9 +323,21 @@ def create_minimal_docx(path: Path, paragraphs: list[tuple[str, str | None]]) ->
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>'
     )
+    styles = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        '<w:style w:type="paragraph" w:styleId="2"><w:name w:val="heading 1"/><w:pPr><w:numPr/></w:pPr></w:style>'
+        '<w:style w:type="paragraph" w:styleId="3"><w:name w:val="heading 2"/><w:pPr><w:numPr/></w:pPr></w:style>'
+        '<w:style w:type="paragraph" w:styleId="4"><w:name w:val="heading 3"/><w:pPr><w:numPr/></w:pPr></w:style>'
+        '<w:style w:type="paragraph" w:styleId="37"><w:name w:val="大标题"/><w:pPr><w:numPr/></w:pPr></w:style>'
+        '<w:style w:type="paragraph" w:styleId="38"><w:name w:val="二级标题"/><w:pPr><w:numPr/></w:pPr></w:style>'
+        '<w:style w:type="paragraph" w:styleId="39"><w:name w:val="三级标题"/><w:pPr><w:numPr/></w:pPr></w:style>'
+        '</w:styles>'
+    )
     with ZipFile(path, "w", ZIP_DEFLATED) as docx:
         docx.writestr("word/document.xml", document)
         docx.writestr("word/settings.xml", settings)
+        docx.writestr("word/styles.xml", styles)
 
 
 def make_paragraph_xml(text: str, style: str | None = None) -> str:

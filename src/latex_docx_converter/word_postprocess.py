@@ -46,12 +46,14 @@ def postprocess_docx(
         with ZipFile(output_docx, "r") as source:
             document_xml = source.read("word/document.xml")
             settings_xml = source.read("word/settings.xml") if "word/settings.xml" in source.namelist() else None
+            styles_xml = source.read("word/styles.xml") if "word/styles.xml" in source.namelist() else None
 
             document_root = ET.fromstring(document_xml)
             toc_inserted, bibliography_moved = process_document_xml(document_root)
             new_document_xml = xml_bytes(document_root)
 
             new_settings_xml = ensure_update_fields(settings_xml)
+            new_styles_xml = process_styles_xml(styles_xml) if styles_xml is not None else None
 
             with ZipFile(temp_docx, "w", ZIP_DEFLATED) as target:
                 for item in source.infolist():
@@ -59,6 +61,8 @@ def postprocess_docx(
                         target.writestr(item, new_document_xml)
                     elif item.filename == "word/settings.xml":
                         target.writestr(item, new_settings_xml)
+                    elif item.filename == "word/styles.xml" and new_styles_xml is not None:
+                        target.writestr(item, new_styles_xml)
                     else:
                         target.writestr(item, source.read(item.filename))
                 if "word/settings.xml" not in source.namelist():
@@ -95,6 +99,18 @@ def process_document_xml(root: ET.Element) -> tuple[bool, bool]:
     toc_inserted = insert_toc_field(body)
     remove_marker_paragraphs(body)
     return toc_inserted, bibliography_moved
+
+
+def process_styles_xml(styles_xml: bytes) -> bytes:
+    root = ET.fromstring(styles_xml)
+    for style_id in ("2", "3", "4", "37", "38", "39"):
+        style = root.find(f"w:style[@w:styleId='{style_id}']", NS)
+        if style is None:
+            continue
+        ppr = style.find("w:pPr", NS)
+        if ppr is not None:
+            remove_child(ppr, "numPr")
+    return xml_bytes(root)
 
 
 def remove_table_of_contents_heading(body: ET.Element) -> None:
@@ -150,20 +166,22 @@ def apply_tju_styles(body: ET.Element) -> None:
                 replace_paragraph_text(child, "附  录")
             if text in {"致 谢", "致谢"}:
                 replace_paragraph_text(child, "致  谢")
-            set_paragraph_style(child, "36", outline_level=0)
+            set_paragraph_style(child, "36", outline_level=0, clear_numbering=True)
         elif is_caption_like_paragraph(text, child, previous, next_element):
             set_paragraph_style(child, "8")
             set_paragraph_alignment(child, "center")
         elif style == "2" or re.match(r"^第[一二三四五六七八九十百\d]+章\b", text):
-            set_paragraph_style(child, "37", outline_level=0)
+            set_paragraph_style(child, "2", outline_level=0, clear_numbering=True)
         elif style == "3":
-            set_paragraph_style(child, "38", outline_level=1)
+            set_paragraph_style(child, "3", outline_level=1, clear_numbering=True)
         elif style == "4":
-            set_paragraph_style(child, "39", outline_level=2)
-        elif style in {"38", "39"}:
-            continue
+            set_paragraph_style(child, "4", outline_level=2, clear_numbering=True)
+        elif style == "38":
+            set_paragraph_style(child, "3", outline_level=1, clear_numbering=True)
+        elif style == "39":
+            set_paragraph_style(child, "4", outline_level=2, clear_numbering=True)
         elif re.match(r"^第[一二三四五六七八九十百\d]+章\b", text):
-            set_paragraph_style(child, "37", outline_level=0)
+            set_paragraph_style(child, "2", outline_level=0, clear_numbering=True)
         elif is_bibliography_entry(text):
             set_paragraph_style(child, "44")
         elif is_body_like_paragraph(text, child):
@@ -266,11 +284,18 @@ def replace_paragraph_text(paragraph: ET.Element, text: str) -> None:
     text_node.text = text
 
 
-def set_paragraph_style(paragraph: ET.Element, style_id: str, outline_level: int | None = None) -> None:
+def set_paragraph_style(
+    paragraph: ET.Element,
+    style_id: str,
+    outline_level: int | None = None,
+    clear_numbering: bool = False,
+) -> None:
     ppr = paragraph.find("w:pPr", NS)
     if ppr is None:
         ppr = ET.Element(q("pPr"))
         paragraph.insert(0, ppr)
+    if clear_numbering:
+        remove_child(ppr, "numPr")
     pstyle = ppr.find("w:pStyle", NS)
     if pstyle is None:
         pstyle = ET.Element(q("pStyle"))
@@ -294,6 +319,12 @@ def set_paragraph_alignment(paragraph: ET.Element, value: str) -> None:
         alignment = ET.Element(q("jc"))
         ppr.append(alignment)
     alignment.set(q("val"), value)
+
+
+def remove_child(parent: ET.Element, tag: str) -> None:
+    child = parent.find(f"w:{tag}", NS)
+    if child is not None:
+        parent.remove(child)
 
 
 def current_style(paragraph: ET.Element) -> str | None:
