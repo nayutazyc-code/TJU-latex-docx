@@ -4,8 +4,6 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 import re
-import shutil
-import subprocess
 import tempfile
 
 
@@ -14,6 +12,7 @@ class PreparedInput:
     main_tex: Path
     notes: tuple[str, ...] = ()
     add_toc: bool = False
+    postprocess_docx: bool = False
 
 
 @contextmanager
@@ -27,9 +26,7 @@ def prepare_tjuthesis_input(project_dir: Path, main_tex: Path):
     introduction_text = read_text(introduction_path) if introduction_path else ""
 
     with tempfile.TemporaryDirectory(prefix="latex-docx-tjuthesis-") as tmp:
-        temp_dir = Path(tmp)
-        cover_image = render_pdf_cover(project_dir, main_tex, temp_dir)
-        expanded = build_expanded_tex(project_dir, main_text, introduction_text, cover_image)
+        expanded = build_expanded_tex(project_dir, main_text, introduction_text)
         expanded_path = Path(tmp) / "tjuthesis-pandoc-expanded.tex"
         expanded_path.write_text(expanded, encoding="utf-8")
         yield PreparedInput(
@@ -37,9 +34,10 @@ def prepare_tjuthesis_input(project_dir: Path, main_tex: Path):
             notes=(
                 "TJUThesis compatibility preprocessing enabled.",
                 f"Expanded temporary input: {expanded_path}",
-                f"PDF cover image: {cover_image}" if cover_image else "PDF cover image: unavailable; using text fallback.",
+                "Cover uses editable text fallback; please check final cover against the school template.",
             ),
             add_toc=False,
+            postprocess_docx=True,
         )
 
 
@@ -82,7 +80,7 @@ def build_expanded_tex(
         "\\newpage",
         build_abstract_tex(fields),
         "\\newpage",
-        build_manual_toc(body),
+        build_toc_placeholder(),
         "\\newpage",
         body,
         "\\end{document}",
@@ -147,16 +145,8 @@ def build_cover_tex(fields: dict[str, str], cover_image: Path | None = None) -> 
     )
 
 
-def build_manual_toc(body: str) -> str:
-    entries = extract_heading_entries(body)
-    if not entries:
-        return "\\section*{目 录}"
-
-    lines = ["\\section*{目 录}"]
-    for level, title in entries:
-        indent = "\\quad " * max(level - 1, 0)
-        lines.append(f"{indent}{title}\\\\")
-    return "\n".join(lines)
+def build_toc_placeholder() -> str:
+    return "\\section*{目  录}\n\nTJU_DOCX_TOC_PLACEHOLDER"
 
 
 def build_declaration_note() -> str:
@@ -226,7 +216,11 @@ def cleanup_template_latex(text: str) -> str:
     text = re.sub(r"\\vspace\*?\{[^{}]*\}", "", text)
     text = re.sub(r"\\(?:songti|heiti|zihao)\*?(?:\{[^{}]*\})?", "", text)
     text = re.sub(r"\\(?:songtibf|heitibf)\{([^{}]*)\}", r"\\textbf{\1}", text)
-    text = re.sub(r"\\printbibliography(?:\[[^\]]*\])?", "\\\\section*{参考文献}", text)
+    text = re.sub(
+        r"\\printbibliography(?:\[[^\]]*\])?",
+        "\\\\section*{参考文献}\n\nTJU_DOCX_BIB_PLACEHOLDER",
+        text,
+    )
     return text
 
 
@@ -324,26 +318,6 @@ def to_chinese_number(number: int) -> str:
         10: "十",
     }
     return values.get(number, str(number))
-
-
-def render_pdf_cover(project_dir: Path, main_tex: Path, temp_dir: Path) -> Path | None:
-    pdf = main_tex.with_suffix(".pdf")
-    if not pdf.is_file():
-        candidates = sorted(project_dir.glob("*.pdf"))
-        pdf = candidates[0] if candidates else pdf
-    if not pdf.is_file() or shutil.which("sips") is None:
-        return None
-
-    cover_png = temp_dir / "tju-cover.png"
-    process = subprocess.run(
-        ["sips", "-s", "format", "png", str(pdf), "--out", str(cover_png)],
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if process.returncode != 0 or not cover_png.is_file():
-        return None
-    return cover_png
 
 
 def replace_figuremacro(groups: list[str]) -> str:

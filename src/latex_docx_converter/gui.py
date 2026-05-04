@@ -7,6 +7,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from .converter import ConversionConfig, ConversionError, convert_project, resolve_export_docx
+from .defaults import find_default_bibliography, find_default_csl, find_default_reference_docx
 from .pandoc_manager import PandocInstallError, check_pandoc, ensure_pandoc
 from .scanner import find_main_tex_candidates
 
@@ -98,7 +99,9 @@ class ConverterApp(tk.Tk):
             return
         self.project_dir.set(selected)
         self._log(f"项目文件夹：{selected}")
-        self._scan_candidates(Path(selected))
+        project_dir = Path(selected)
+        self._scan_candidates(project_dir)
+        self._fill_default_optional_files(project_dir)
 
     def _choose_main_tex(self) -> None:
         initial = self.project_dir.get() or str(Path.home())
@@ -155,6 +158,18 @@ class ConverterApp(tk.Tk):
         else:
             self.main_tex.set("")
             self._log("没有找到 .tex 文件，请手动选择。")
+
+    def _fill_default_optional_files(self, project_dir: Path) -> None:
+        defaults = [
+            (self.reference_docx, find_default_reference_docx(project_dir), "参考模板"),
+            (self.bibliography, find_default_bibliography(project_dir), "参考文献"),
+            (self.csl, find_default_csl(project_dir), "引用样式"),
+        ]
+        for variable, path, label in defaults:
+            if variable.get().strip() or path is None:
+                continue
+            variable.set(str(path))
+            self._log(f"已自动选择{label}：{path}")
 
     def _suggest_output(self, main_tex: Path) -> None:
         if self.output_docx.get():
@@ -249,7 +264,12 @@ class ConverterApp(tk.Tk):
                     result = payload
                     self._log(f"导出完成：{result.output_docx}")
                     self._log(f"日志文件：{result.log_path}")
-                    messagebox.showinfo("导出完成", f"DOCX 已生成：\n{result.output_docx}")
+                    for warning in result.warnings:
+                        self._log(f"警告：{warning}")
+                    message = f"DOCX 已生成：\n{result.output_docx}\n\n日志文件：\n{result.log_path}"
+                    if result.warnings:
+                        message += "\n\n有警告，请查看转换日志。"
+                    messagebox.showinfo("导出完成", message)
                     self._set_busy(False)
                 elif event == "convert_error":
                     self._log(str(payload))
