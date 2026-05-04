@@ -248,6 +248,7 @@ def cleanup_template_latex(text: str) -> str:
     text = replace_multi_argument_macro(text, "texorpdfstring", lambda groups: groups[0], group_count=2)
     text = number_mainmatter_chapters(text)
     text = number_mainmatter_sections(text)
+    text = number_float_captions(text)
     text = re.sub(r"\\(?:begin|end)\{appendixenv\}", "", text)
     text = re.sub(r"\\(?:frontmatter|mainmatter|backmatter|clearpage)\b", "", text)
     text = re.sub(r"\\vspace\*?\{[^{}]*\}", "", text)
@@ -400,6 +401,121 @@ def chinese_number_to_int(value: str) -> int | None:
 
 def strip_heading_number(title: str) -> str:
     return re.sub(r"^\d+(?:\.\d+)*\s+", "", title).strip()
+
+
+def number_float_captions(text: str) -> str:
+    result: list[str] = []
+    index = 0
+    chapter_number = 0
+    figure_number = 0
+    table_number = 0
+    numbered = True
+
+    while index < len(text):
+        matches = find_next_float_caption_targets(text, index)
+        if not matches:
+            result.append(text[index:])
+            return "".join(result)
+
+        start, kind = min(matches, key=lambda item: item[0])
+        result.append(text[index:start])
+        if kind == "backmatter":
+            result.append("\\backmatter")
+            index = start + len("\\backmatter")
+            numbered = False
+            continue
+        if kind == "chapter":
+            parsed = parse_command_groups(text, start, "chapter", 1)
+            if parsed is None:
+                result.append(text[start : start + len("\\chapter")])
+                index = start + len("\\chapter")
+                continue
+            groups, end = parsed
+            chapter_number = chapter_number_from_title(clean_heading_title(groups[0])) or chapter_number + 1
+            figure_number = 0
+            table_number = 0
+            result.append(text[start:end])
+            index = end
+            continue
+
+        environment_end = find_environment_end(text, start, kind)
+        if environment_end is None:
+            result.append(text[start:])
+            return "".join(result)
+        environment_text = text[start:environment_end]
+        if numbered and chapter_number:
+            if kind == "figure":
+                figure_number += 1
+                environment_text = number_caption_in_environment(
+                    environment_text,
+                    f"图{chapter_number}-{figure_number}",
+                )
+            elif kind == "table":
+                table_number += 1
+                environment_text = number_caption_in_environment(
+                    environment_text,
+                    f"表{chapter_number}-{table_number}",
+                )
+        result.append(environment_text)
+        index = environment_end
+
+    return "".join(result)
+
+
+def find_next_float_caption_targets(text: str, index: int) -> list[tuple[int, str]]:
+    targets: list[tuple[int, str]] = []
+    for token, kind in (
+        ("\\chapter", "chapter"),
+        ("\\backmatter", "backmatter"),
+        ("\\begin{figure", "figure"),
+        ("\\begin{table", "table"),
+    ):
+        found = text.find(token, index)
+        if found != -1:
+            targets.append((found, kind))
+    return targets
+
+
+def find_environment_end(text: str, start: int, environment: str) -> int | None:
+    token = f"\\end{{{environment}}}"
+    end = text.find(token, start)
+    if end == -1:
+        return None
+    return end + len(token)
+
+
+def number_caption_in_environment(text: str, prefix: str) -> str:
+    parsed = parse_caption_command(text)
+    if parsed is None:
+        return text
+    caption, group_start, group_end = parsed
+    clean_caption = clean_heading_title(caption)
+    if re.match(r"^(图|表)\s*\d+[-.]\d+", clean_caption):
+        return text
+    return text[:group_start] + "{" + f"{prefix}  {clean_caption}" + "}" + text[group_end:]
+
+
+def parse_caption_command(text: str) -> tuple[str, int, int] | None:
+    start = text.find("\\caption")
+    if start == -1:
+        return None
+    index = start + len("\\caption")
+    while index < len(text) and text[index].isspace():
+        index += 1
+    if index < len(text) and text[index] == "[":
+        optional_end = text.find("]", index)
+        if optional_end == -1:
+            return None
+        index = optional_end + 1
+    while index < len(text) and text[index].isspace():
+        index += 1
+    if index >= len(text) or text[index] != "{":
+        return None
+    parsed = parse_group_at(text, index)
+    if parsed is None:
+        return None
+    caption, end = parsed
+    return caption, index, end
 
 
 def extract_heading_entries(text: str) -> list[tuple[int, str]]:

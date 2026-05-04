@@ -150,7 +150,12 @@ class TjuThesisTests(unittest.TestCase):
             contents = root / "contents"
             contents.mkdir()
             (contents / "chapter1.tex").write_text(
-                "\\chapter{绪论}\n\\section{研究背景}\n\\subsection{研究意义}\n正文",
+                "\\chapter{绪论}\n"
+                "\\section{研究背景}\n"
+                "\\subsection{研究意义}\n"
+                "\\begin{figure}\\caption{系统架构图}\\label{fig:a}\\end{figure}\n"
+                "\\begin{table}\\caption{实验数据表}\\label{tab:a}\\end{table}\n"
+                "正文",
                 encoding="utf-8",
             )
             main_text = (
@@ -175,6 +180,8 @@ class TjuThesisTests(unittest.TestCase):
             self.assertIn("\\chapter{第一章 绪论}", expanded)
             self.assertIn("\\section{1.1  研究背景}", expanded)
             self.assertIn("\\subsection{1.1.1  研究意义}", expanded)
+            self.assertIn("\\caption{图1-1  系统架构图}", expanded)
+            self.assertIn("\\caption{表1-1  实验数据表}", expanded)
 
     def test_prepare_tjuthesis_marks_postprocessing_required(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -299,7 +306,7 @@ class WordPostprocessTests(unittest.TestCase):
                     ("第一章 绪论", "2"),
                     ("研究背景", "3"),
                     ("研究意义", "4"),
-                    ("智能工地喷淋系统总体架构图", "CaptionedFigure"),
+                    ("图2-1  智能工地喷淋系统总体架构图", "CaptionedFigure"),
                     ("正文内容", None),
                 ],
             )
@@ -321,6 +328,8 @@ class WordPostprocessTests(unittest.TestCase):
             self.assertIn('w:left="0"', document_xml)
             self.assertIn('w:firstLine="0"', document_xml)
             self.assertIn('w:firstLineChars="0"', document_xml)
+            self.assertIn('w:jc w:val="center"', document_xml)
+            self.assertIn('xml:space="preserve">图2-1  智能工地喷淋系统总体架构图', document_xml)
 
     def test_postprocess_formats_bibliography_entries_with_hanging_indent(self):
         with tempfile.TemporaryDirectory() as tmp:

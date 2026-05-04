@@ -186,7 +186,7 @@ def apply_tju_styles(body: ET.Element) -> None:
             set_paragraph_style(child, "36", outline_level=0, clear_numbering=True)
         elif is_caption_like_paragraph(text, child, previous, next_element):
             set_paragraph_style(child, "8")
-            set_paragraph_alignment(child, "center")
+            apply_caption_paragraph_format(child)
         elif style == "2" or re.match(r"^第[一二三四五六七八九十百\d]+章\b", text):
             set_paragraph_style(child, "2", outline_level=0, clear_numbering=True)
             apply_heading_paragraph_format(child, 1)
@@ -305,6 +305,8 @@ def replace_paragraph_text(paragraph: ET.Element, text: str) -> None:
         paragraph.remove(run)
     run = ET.SubElement(paragraph, q("r"))
     text_node = ET.SubElement(run, q("t"))
+    if "  " in text:
+        text_node.set(XML_SPACE, "preserve")
     text_node.text = text
 
 
@@ -349,6 +351,20 @@ def apply_heading_paragraph_format(paragraph: ET.Element, level: int) -> None:
         set_paragraph_alignment(paragraph, "left")
         set_paragraph_spacing(paragraph, before="240", after="240")
         set_paragraph_indentation(paragraph, left="0", first_line="0", first_line_chars="0")
+
+
+def apply_caption_paragraph_format(paragraph: ET.Element) -> None:
+    normalize_caption_text(paragraph)
+    set_paragraph_alignment(paragraph, "center")
+    set_paragraph_indentation(paragraph, left="0", first_line="0", first_line_chars="0")
+    set_paragraph_spacing(paragraph, before="120", after="120")
+
+
+def normalize_caption_text(paragraph: ET.Element) -> None:
+    text = element_text(paragraph)
+    normalized = re.sub(r"^([图表]\d+-\d+)\s+", r"\1  ", text)
+    if re.match(r"^[图表]\d+-\d+", normalized):
+        replace_paragraph_text(paragraph, normalized)
 
 
 def apply_reference_paragraph_format(element: ET.Element) -> None:
