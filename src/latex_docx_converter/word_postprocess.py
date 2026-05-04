@@ -340,14 +340,15 @@ def apply_heading_paragraph_format(paragraph: ET.Element, level: int) -> None:
         set_paragraph_alignment(paragraph, "center")
         set_paragraph_spacing(paragraph, before="600", after="600")
         set_paragraph_indentation(paragraph, left="0", first_line="0")
+        set_page_break_before(paragraph)
     elif level == 2:
         set_paragraph_alignment(paragraph, "left")
         set_paragraph_spacing(paragraph, before="360", after="360")
-        set_paragraph_indentation(paragraph, first_line_chars="0")
+        set_paragraph_indentation(paragraph, left="0", first_line="0", first_line_chars="0")
     elif level == 3:
         set_paragraph_alignment(paragraph, "left")
         set_paragraph_spacing(paragraph, before="240", after="240")
-        set_paragraph_indentation(paragraph, first_line_chars="0")
+        set_paragraph_indentation(paragraph, left="0", first_line="0", first_line_chars="0")
 
 
 def apply_reference_paragraph_format(element: ET.Element) -> None:
@@ -429,6 +430,12 @@ def set_paragraph_indentation(
     ):
         if value is not None:
             ind.set(q(attr), value)
+
+
+def set_page_break_before(paragraph: ET.Element) -> None:
+    ppr = ensure_ppr(paragraph)
+    if ppr.find("w:pageBreakBefore", NS) is None:
+        ppr.append(ET.Element(q("pageBreakBefore")))
 
 
 def ensure_ppr(element: ET.Element) -> ET.Element:

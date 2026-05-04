@@ -317,6 +317,10 @@ class WordPostprocessTests(unittest.TestCase):
             self.assertIn('w:before="600"', document_xml)
             self.assertIn('w:before="360"', document_xml)
             self.assertIn('w:before="240"', document_xml)
+            self.assertIn("<w:pageBreakBefore", document_xml)
+            self.assertIn('w:left="0"', document_xml)
+            self.assertIn('w:firstLine="0"', document_xml)
+            self.assertIn('w:firstLineChars="0"', document_xml)
 
     def test_postprocess_formats_bibliography_entries_with_hanging_indent(self):
         with tempfile.TemporaryDirectory() as tmp:
