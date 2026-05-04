@@ -100,9 +100,7 @@ def build_expanded_tex(
         "\\usepackage{amsmath}",
         "\\usepackage{hyperref}",
         "\\begin{document}",
-        build_cover_tex(fields, cover_image),
-        "\\newpage",
-        build_declaration_note(),
+        build_frontmatter_placeholder(),
         "\\newpage",
         build_abstract_tex(fields),
         "\\newpage",
@@ -178,6 +176,15 @@ def build_toc_placeholder() -> str:
     return "\\section*{目  录}\n\nTJU_DOCX_TOC_PLACEHOLDER"
 
 
+def build_frontmatter_placeholder() -> str:
+    return "\n".join(
+        [
+            "\\section*{封面与独创性声明}",
+            "请复制粘贴学校 Word 模板中对应的封面、独创性声明部分，并在最终提交前按学院要求核对。",
+        ]
+    )
+
+
 def build_declaration_note() -> str:
     return "\n".join(
         [
@@ -240,6 +247,7 @@ def cleanup_template_latex(text: str) -> str:
     text = replace_multi_argument_macro(text, "tablemacro", replace_tablemacro)
     text = replace_multi_argument_macro(text, "texorpdfstring", lambda groups: groups[0], group_count=2)
     text = number_mainmatter_chapters(text)
+    text = number_mainmatter_sections(text)
     text = re.sub(r"\\(?:begin|end)\{appendixenv\}", "", text)
     text = re.sub(r"\\(?:frontmatter|mainmatter|backmatter|clearpage)\b", "", text)
     text = re.sub(r"\\vspace\*?\{[^{}]*\}", "", text)
@@ -293,6 +301,105 @@ def number_mainmatter_chapters(text: str) -> str:
         else:
             result.append(f"\\chapter{{{title}}}")
         index = end
+
+
+def number_mainmatter_sections(text: str) -> str:
+    result: list[str] = []
+    index = 0
+    chapter_number = 0
+    section_number = 0
+    subsection_number = 0
+    numbered = True
+    commands = ("chapter", "section", "subsection")
+
+    while index < len(text):
+        matches = [
+            (text.find(f"\\{command}", index), command)
+            for command in commands
+            if text.find(f"\\{command}", index) != -1
+        ]
+        backmatter_index = text.find("\\backmatter", index)
+        if backmatter_index != -1:
+            matches.append((backmatter_index, "backmatter"))
+        if not matches:
+            result.append(text[index:])
+            return "".join(result)
+
+        start, command = min(matches, key=lambda item: item[0])
+        result.append(text[index:start])
+        if command == "backmatter":
+            result.append("\\backmatter")
+            index = start + len("\\backmatter")
+            numbered = False
+            continue
+
+        if text[start + len(command) + 1 : start + len(command) + 2] == "*":
+            result.append(text[start : start + len(command) + 2])
+            index = start + len(command) + 2
+            continue
+
+        parsed = parse_command_groups(text, start, command, 1)
+        if parsed is None:
+            result.append(text[start : start + len(command) + 1])
+            index = start + len(command) + 1
+            continue
+
+        groups, end = parsed
+        title = clean_heading_title(groups[0])
+        if command == "chapter":
+            if numbered:
+                chapter_number = chapter_number_from_title(title) or chapter_number + 1
+                section_number = 0
+                subsection_number = 0
+            result.append(f"\\chapter{{{title}}}")
+        elif command == "section":
+            if numbered and chapter_number:
+                section_number += 1
+                subsection_number = 0
+                title = strip_heading_number(title)
+                result.append(f"\\section{{{chapter_number}.{section_number}  {title}}}")
+            else:
+                result.append(f"\\section{{{title}}}")
+        elif command == "subsection":
+            if numbered and chapter_number and section_number:
+                subsection_number += 1
+                title = strip_heading_number(title)
+                result.append(f"\\subsection{{{chapter_number}.{section_number}.{subsection_number}  {title}}}")
+            else:
+                result.append(f"\\subsection{{{title}}}")
+        index = end
+
+    return "".join(result)
+
+
+def chapter_number_from_title(title: str) -> int | None:
+    match = re.match(r"^第([一二三四五六七八九十百\d]+)章", title)
+    if not match:
+        return None
+    value = match.group(1)
+    if value.isdigit():
+        return int(value)
+    return chinese_number_to_int(value)
+
+
+def chinese_number_to_int(value: str) -> int | None:
+    mapping = {
+        "一": 1,
+        "二": 2,
+        "三": 3,
+        "四": 4,
+        "五": 5,
+        "六": 6,
+        "七": 7,
+        "八": 8,
+        "九": 9,
+        "十": 10,
+    }
+    return mapping.get(value)
+
+
+def strip_heading_number(title: str) -> str:
+    return re.sub(r"^\d+(?:\.\d+)*\s+", "", title).strip()
 
 
 def extract_heading_entries(text: str) -> list[tuple[int, str]]:

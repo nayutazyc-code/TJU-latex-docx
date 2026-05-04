@@ -110,6 +110,9 @@ def process_styles_xml(styles_xml: bytes) -> bytes:
         ppr = style.find("w:pPr", NS)
         if ppr is not None:
             remove_child(ppr, "numPr")
+    reference_style = root.find("w:style[@w:styleId='44']", NS)
+    if reference_style is not None:
+        apply_reference_paragraph_format(reference_style)
     return xml_bytes(root)
 
 
@@ -128,6 +131,7 @@ def move_bibliography_entries(body: ET.Element) -> bool:
     for entry in bib_entries:
         body.remove(entry)
         set_paragraph_style(entry, "44")
+        apply_reference_paragraph_format(entry)
 
     children = list(body)
     insert_at = None
@@ -157,7 +161,20 @@ def apply_tju_styles(body: ET.Element) -> None:
         style = current_style(child)
         previous = children[index - 1] if index > 0 else None
         next_element = children[index + 1] if index + 1 < len(children) else None
-        if text in {"独创性声明", "摘 要", "摘要", "ABSTRACT", "目 录", "目录", "参考文献", "附 录", "附录", "致 谢", "致谢"}:
+        if text in {
+            "封面与独创性声明",
+            "独创性声明",
+            "摘 要",
+            "摘要",
+            "ABSTRACT",
+            "目 录",
+            "目录",
+            "参考文献",
+            "附 录",
+            "附录",
+            "致 谢",
+            "致谢",
+        }:
             if text in {"目 录", "目录"}:
                 replace_paragraph_text(child, "目  录")
             if text in {"摘 要", "摘要"}:
@@ -172,18 +189,25 @@ def apply_tju_styles(body: ET.Element) -> None:
             set_paragraph_alignment(child, "center")
         elif style == "2" or re.match(r"^第[一二三四五六七八九十百\d]+章\b", text):
             set_paragraph_style(child, "2", outline_level=0, clear_numbering=True)
+            apply_heading_paragraph_format(child, 1)
         elif style == "3":
             set_paragraph_style(child, "3", outline_level=1, clear_numbering=True)
+            apply_heading_paragraph_format(child, 2)
         elif style == "4":
             set_paragraph_style(child, "4", outline_level=2, clear_numbering=True)
+            apply_heading_paragraph_format(child, 3)
         elif style == "38":
             set_paragraph_style(child, "3", outline_level=1, clear_numbering=True)
+            apply_heading_paragraph_format(child, 2)
         elif style == "39":
             set_paragraph_style(child, "4", outline_level=2, clear_numbering=True)
+            apply_heading_paragraph_format(child, 3)
         elif re.match(r"^第[一二三四五六七八九十百\d]+章\b", text):
             set_paragraph_style(child, "2", outline_level=0, clear_numbering=True)
+            apply_heading_paragraph_format(child, 1)
         elif is_bibliography_entry(text):
             set_paragraph_style(child, "44")
+            apply_reference_paragraph_format(child)
         elif is_body_like_paragraph(text, child):
             set_paragraph_style(child, "40")
 
@@ -309,16 +333,92 @@ def set_paragraph_style(
         outline.set(q("val"), str(outline_level))
 
 
+def apply_heading_paragraph_format(paragraph: ET.Element, level: int) -> None:
+    ppr = ensure_ppr(paragraph)
+    remove_child(ppr, "numPr")
+    if level == 1:
+        set_paragraph_alignment(paragraph, "center")
+        set_paragraph_spacing(paragraph, before="600", after="600")
+        set_paragraph_indentation(paragraph, left="0", first_line="0")
+    elif level == 2:
+        set_paragraph_alignment(paragraph, "left")
+        set_paragraph_spacing(paragraph, before="360", after="360")
+        set_paragraph_indentation(paragraph, first_line_chars="0")
+    elif level == 3:
+        set_paragraph_alignment(paragraph, "left")
+        set_paragraph_spacing(paragraph, before="240", after="240")
+        set_paragraph_indentation(paragraph, first_line_chars="0")
+
+
+def apply_reference_paragraph_format(element: ET.Element) -> None:
+    set_paragraph_indentation(element, left="420", hanging="420", first_line_chars="0")
+    set_paragraph_spacing(element, before_lines="0", line="400", line_rule="exact")
+    ind = ensure_ppr(element).find("w:ind", NS)
+    if ind is not None and q("firstLine") in ind.attrib:
+        del ind.attrib[q("firstLine")]
+
+
 def set_paragraph_alignment(paragraph: ET.Element, value: str) -> None:
-    ppr = paragraph.find("w:pPr", NS)
-    if ppr is None:
-        ppr = ET.Element(q("pPr"))
-        paragraph.insert(0, ppr)
+    ppr = ensure_ppr(paragraph)
     alignment = ppr.find("w:jc", NS)
     if alignment is None:
         alignment = ET.Element(q("jc"))
         ppr.append(alignment)
     alignment.set(q("val"), value)
+
+
+def set_paragraph_spacing(
+    paragraph: ET.Element,
+    before: str | None = None,
+    after: str | None = None,
+    before_lines: str | None = None,
+    line: str | None = None,
+    line_rule: str | None = None,
+) -> None:
+    ppr = ensure_ppr(paragraph)
+    spacing = ppr.find("w:spacing", NS)
+    if spacing is None:
+        spacing = ET.Element(q("spacing"))
+        ppr.append(spacing)
+    for attr, value in (
+        ("before", before),
+        ("after", after),
+        ("beforeLines", before_lines),
+        ("line", line),
+        ("lineRule", line_rule),
+    ):
+        if value is not None:
+            spacing.set(q(attr), value)
+
+
+def set_paragraph_indentation(
+    paragraph: ET.Element,
+    left: str | None = None,
+    first_line: str | None = None,
+    first_line_chars: str | None = None,
+    hanging: str | None = None,
+) -> None:
+    ppr = ensure_ppr(paragraph)
+    ind = ppr.find("w:ind", NS)
+    if ind is None:
+        ind = ET.Element(q("ind"))
+        ppr.append(ind)
+    for attr, value in (
+        ("left", left),
+        ("firstLine", first_line),
+        ("firstLineChars", first_line_chars),
+        ("hanging", hanging),
+    ):
+        if value is not None:
+            ind.set(q(attr), value)
+
+
+def ensure_ppr(element: ET.Element) -> ET.Element:
+    ppr = element.find("w:pPr", NS)
+    if ppr is None:
+        ppr = ET.Element(q("pPr"))
+        element.insert(0, ppr)
+    return ppr
 
 
 def remove_child(parent: ET.Element, tag: str) -> None:

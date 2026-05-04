@@ -149,7 +149,10 @@ class TjuThesisTests(unittest.TestCase):
             root = Path(tmp)
             contents = root / "contents"
             contents.mkdir()
-            (contents / "chapter1.tex").write_text("\\chapter{第一章}\n正文", encoding="utf-8")
+            (contents / "chapter1.tex").write_text(
+                "\\chapter{绪论}\n\\section{研究背景}\n\\subsection{研究意义}\n正文",
+                encoding="utf-8",
+            )
             main_text = (
                 "\\documentclass{tjuthesis-Bachelor}\n"
                 "\\begin{document}\n"
@@ -165,12 +168,13 @@ class TjuThesisTests(unittest.TestCase):
 
             expanded = build_expanded_tex(root, main_text, intro_text)
 
-            self.assertIn("本科生毕业论文", expanded)
-            self.assertIn("题目：题目", expanded)
+            self.assertIn("请复制粘贴学校 Word 模板中对应的封面、独创性声明部分", expanded)
             self.assertIn("\\section*{摘 要}", expanded)
             self.assertIn("TJU_DOCX_TOC_PLACEHOLDER", expanded)
             self.assertIn("TJU_DOCX_BIB_PLACEHOLDER", expanded)
-            self.assertIn("\\chapter{第一章}", expanded)
+            self.assertIn("\\chapter{第一章 绪论}", expanded)
+            self.assertIn("\\section{1.1  研究背景}", expanded)
+            self.assertIn("\\subsection{1.1.1  研究意义}", expanded)
 
     def test_prepare_tjuthesis_marks_postprocessing_required(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -310,6 +314,26 @@ class WordPostprocessTests(unittest.TestCase):
             self.assertIn('<w:pStyle w:val="8"', document_xml)
             self.assertNotIn("<w:numPr", document_xml)
             self.assertNotIn("<w:numPr", styles_xml)
+            self.assertIn('w:before="600"', document_xml)
+            self.assertIn('w:before="360"', document_xml)
+            self.assertIn('w:before="240"', document_xml)
+
+    def test_postprocess_formats_bibliography_entries_with_hanging_indent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            docx = Path(tmp) / "refs.docx"
+            create_minimal_docx(docx, [("参考文献", "36"), ("[1] 张三. 文献题名[M]. 北京：出版社，2024.", None)])
+
+            postprocess_docx(docx, WordPostprocessProfile())
+            document_xml = read_docx_xml(docx, "word/document.xml")
+            styles_xml = read_docx_xml(docx, "word/styles.xml")
+
+            self.assertIn('<w:pStyle w:val="44"', document_xml)
+            self.assertIn('w:left="420"', document_xml)
+            self.assertIn('w:hanging="420"', document_xml)
+            self.assertIn('w:line="400"', document_xml)
+            self.assertIn('w:lineRule="exact"', document_xml)
+            self.assertIn('w:left="420"', styles_xml)
+            self.assertIn('w:hanging="420"', styles_xml)
 
 
 def create_minimal_docx(path: Path, paragraphs: list[tuple[str, str | None]]) -> None:
@@ -332,6 +356,7 @@ def create_minimal_docx(path: Path, paragraphs: list[tuple[str, str | None]]) ->
         '<w:style w:type="paragraph" w:styleId="37"><w:name w:val="大标题"/><w:pPr><w:numPr/></w:pPr></w:style>'
         '<w:style w:type="paragraph" w:styleId="38"><w:name w:val="二级标题"/><w:pPr><w:numPr/></w:pPr></w:style>'
         '<w:style w:type="paragraph" w:styleId="39"><w:name w:val="三级标题"/><w:pPr><w:numPr/></w:pPr></w:style>'
+        '<w:style w:type="paragraph" w:styleId="44"><w:name w:val="List Paragraph"/></w:style>'
         '</w:styles>'
     )
     with ZipFile(path, "w", ZIP_DEFLATED) as docx:
