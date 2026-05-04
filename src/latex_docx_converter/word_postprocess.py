@@ -131,12 +131,16 @@ def move_bibliography_entries(body: ET.Element) -> bool:
 
 
 def apply_tju_styles(body: ET.Element) -> None:
-    for child in list(body):
+    children = list(body)
+    for index, child in enumerate(children):
         if not is_paragraph(child):
             continue
         text = normalized_text(element_text(child))
         if not text:
             continue
+        style = current_style(child)
+        previous = children[index - 1] if index > 0 else None
+        next_element = children[index + 1] if index + 1 < len(children) else None
         if text in {"独创性声明", "摘 要", "摘要", "ABSTRACT", "目 录", "目录", "参考文献", "附 录", "附录", "致 谢", "致谢"}:
             if text in {"目 录", "目录"}:
                 replace_paragraph_text(child, "目  录")
@@ -146,11 +150,20 @@ def apply_tju_styles(body: ET.Element) -> None:
                 replace_paragraph_text(child, "附  录")
             if text in {"致 谢", "致谢"}:
                 replace_paragraph_text(child, "致  谢")
-            set_paragraph_style(child, "36")
-        elif re.match(r"^第[一二三四五六七八九十百\d]+章\b", text):
-            set_paragraph_style(child, "2")
-        elif current_style(child) in {"3", "4", "38", "39"}:
+            set_paragraph_style(child, "36", outline_level=0)
+        elif is_caption_like_paragraph(text, child, previous, next_element):
+            set_paragraph_style(child, "8")
+            set_paragraph_alignment(child, "center")
+        elif style == "2" or re.match(r"^第[一二三四五六七八九十百\d]+章\b", text):
+            set_paragraph_style(child, "37", outline_level=0)
+        elif style == "3":
+            set_paragraph_style(child, "38", outline_level=1)
+        elif style == "4":
+            set_paragraph_style(child, "39", outline_level=2)
+        elif style in {"38", "39"}:
             continue
+        elif re.match(r"^第[一二三四五六七八九十百\d]+章\b", text):
+            set_paragraph_style(child, "37", outline_level=0)
         elif is_bibliography_entry(text):
             set_paragraph_style(child, "44")
         elif is_body_like_paragraph(text, child):
@@ -253,7 +266,7 @@ def replace_paragraph_text(paragraph: ET.Element, text: str) -> None:
     text_node.text = text
 
 
-def set_paragraph_style(paragraph: ET.Element, style_id: str) -> None:
+def set_paragraph_style(paragraph: ET.Element, style_id: str, outline_level: int | None = None) -> None:
     ppr = paragraph.find("w:pPr", NS)
     if ppr is None:
         ppr = ET.Element(q("pPr"))
@@ -263,6 +276,24 @@ def set_paragraph_style(paragraph: ET.Element, style_id: str) -> None:
         pstyle = ET.Element(q("pStyle"))
         ppr.insert(0, pstyle)
     pstyle.set(q("val"), style_id)
+    if outline_level is not None:
+        outline = ppr.find("w:outlineLvl", NS)
+        if outline is None:
+            outline = ET.Element(q("outlineLvl"))
+            ppr.append(outline)
+        outline.set(q("val"), str(outline_level))
+
+
+def set_paragraph_alignment(paragraph: ET.Element, value: str) -> None:
+    ppr = paragraph.find("w:pPr", NS)
+    if ppr is None:
+        ppr = ET.Element(q("pPr"))
+        paragraph.insert(0, ppr)
+    alignment = ppr.find("w:jc", NS)
+    if alignment is None:
+        alignment = ET.Element(q("jc"))
+        ppr.append(alignment)
+    alignment.set(q("val"), value)
 
 
 def current_style(paragraph: ET.Element) -> str | None:
@@ -273,9 +304,32 @@ def current_style(paragraph: ET.Element) -> str | None:
 def is_body_like_paragraph(text: str, paragraph: ET.Element) -> bool:
     if text.startswith("请在 Word 中"):
         return False
-    if current_style(paragraph) in {"CaptionedFigure", "ImageCaption", "TableCaption", "Compact"}:
+    if current_style(paragraph) in {"8", "CaptionedFigure", "ImageCaption", "TableCaption", "Compact"}:
         return False
     return bool(re.search(r"[\u4e00-\u9fffA-Za-z]", text))
+
+
+def is_caption_like_paragraph(
+    text: str,
+    paragraph: ET.Element,
+    previous: ET.Element | None,
+    next_element: ET.Element | None,
+) -> bool:
+    if current_style(paragraph) in {"8", "CaptionedFigure", "ImageCaption", "TableCaption"}:
+        return True
+    if is_bibliography_entry(text) or len(text) > 90:
+        return False
+    if re.match(r"^(图|表)\s*[\d一二三四五六七八九十]+(?:[.-]\d+)?", text):
+        return True
+    if previous is not None and contains_visual(previous):
+        return bool(re.search(r"[\u4e00-\u9fffA-Za-z]", text))
+    if next_element is not None and next_element.tag == q("tbl"):
+        return bool(re.search(r"[\u4e00-\u9fffA-Za-z]", text))
+    return False
+
+
+def contains_visual(element: ET.Element) -> bool:
+    return element.find(".//w:drawing", NS) is not None or element.find(".//w:pict", NS) is not None
 
 
 def is_bibliography_entry(text: str) -> bool:

@@ -15,6 +15,7 @@ from latex_docx_converter.converter import (
 from latex_docx_converter.defaults import find_default_bibliography, find_default_csl, find_default_reference_docx
 from latex_docx_converter.scanner import find_main_tex_candidates
 from latex_docx_converter.tjuthesis import build_expanded_tex, extract_tjuthesis_fields, prepare_tjuthesis_input
+from latex_docx_converter.tikz_renderer import find_tikz_figures, make_includegraphics_figure
 from latex_docx_converter.word_postprocess import WordPostprocessProfile, postprocess_docx
 
 
@@ -196,6 +197,37 @@ class TjuThesisTests(unittest.TestCase):
                 self.assertFalse(prepared.postprocess_docx)
 
 
+class TikzRendererTests(unittest.TestCase):
+    def test_finds_tikz_figure_caption_and_label(self):
+        text = (
+            "正文\n"
+            "\\begin{figure}[htbp]\n"
+            "\\centering\n"
+            "\\begin{tikzpicture}\\node {测试};\\end{tikzpicture}\n"
+            "\\caption{系统架构图}\n"
+            "\\label{fig:system}\n"
+            "\\end{figure}\n"
+        )
+
+        figures = find_tikz_figures(text)
+
+        self.assertEqual(len(figures), 1)
+        self.assertEqual(figures[0].caption, "系统架构图")
+        self.assertEqual(figures[0].label, "fig:system")
+
+    def test_replaces_tikz_figure_with_includegraphics_shape(self):
+        figure = find_tikz_figures(
+            "\\begin{figure}\\begin{tikzpicture}\\node {A};\\end{tikzpicture}"
+            "\\caption{流程图}\\label{fig:flow}\\end{figure}"
+        )[0]
+
+        replacement = make_includegraphics_figure(figure, Path("/tmp/tikz-fig-flow.png"))
+
+        self.assertIn("\\includegraphics[width=0.95\\textwidth]{/tmp/tikz-fig-flow.png}", replacement)
+        self.assertIn("\\caption{流程图}", replacement)
+        self.assertIn("\\label{fig:flow}", replacement)
+
+
 class DefaultDiscoveryTests(unittest.TestCase):
     def test_finds_default_files(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -253,6 +285,28 @@ class WordPostprocessTests(unittest.TestCase):
             self.assertIn('w:val="true"', settings_xml)
             self.assertLess(document_xml.find("参考文献"), document_xml.find("[1] ZHANG"))
             self.assertLess(document_xml.find("[1] ZHANG"), document_xml.find("附  录"))
+
+    def test_postprocess_maps_headings_to_tju_template_styles(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            docx = Path(tmp) / "styles.docx"
+            create_minimal_docx(
+                docx,
+                [
+                    ("第一章 绪论", "2"),
+                    ("研究背景", "3"),
+                    ("研究意义", "4"),
+                    ("智能工地喷淋系统总体架构图", "CaptionedFigure"),
+                    ("正文内容", None),
+                ],
+            )
+
+            postprocess_docx(docx, WordPostprocessProfile())
+            document_xml = read_docx_xml(docx, "word/document.xml")
+
+            self.assertIn('<w:pStyle w:val="37"', document_xml)
+            self.assertIn('<w:pStyle w:val="38"', document_xml)
+            self.assertIn('<w:pStyle w:val="39"', document_xml)
+            self.assertIn('<w:pStyle w:val="8"', document_xml)
 
 
 def create_minimal_docx(path: Path, paragraphs: list[tuple[str, str | None]]) -> None:

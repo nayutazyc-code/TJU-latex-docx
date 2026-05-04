@@ -6,11 +6,14 @@ from pathlib import Path
 import re
 import tempfile
 
+from .tikz_renderer import render_tikz_figures
+
 
 @dataclass(frozen=True)
 class PreparedInput:
     main_tex: Path
     notes: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
     add_toc: bool = False
     postprocess_docx: bool = False
 
@@ -26,8 +29,16 @@ def prepare_tjuthesis_input(project_dir: Path, main_tex: Path):
     introduction_text = read_text(introduction_path) if introduction_path else ""
 
     with tempfile.TemporaryDirectory(prefix="latex-docx-tjuthesis-") as tmp:
-        expanded = build_expanded_tex(project_dir, main_text, introduction_text)
-        expanded_path = Path(tmp) / "tjuthesis-pandoc-expanded.tex"
+        temp_dir = Path(tmp)
+        tikz_output_dir = temp_dir / "rendered-tikz"
+        expanded, tikz_report = build_expanded_tex(
+            project_dir,
+            main_text,
+            introduction_text,
+            tikz_output_dir=tikz_output_dir,
+            return_tikz_report=True,
+        )
+        expanded_path = temp_dir / "tjuthesis-pandoc-expanded.tex"
         expanded_path.write_text(expanded, encoding="utf-8")
         yield PreparedInput(
             main_tex=expanded_path,
@@ -35,7 +46,9 @@ def prepare_tjuthesis_input(project_dir: Path, main_tex: Path):
                 "TJUThesis compatibility preprocessing enabled.",
                 f"Expanded temporary input: {expanded_path}",
                 "Cover uses editable text fallback; please check final cover against the school template.",
+                *tikz_report.notes,
             ),
+            warnings=tikz_report.warnings,
             add_toc=False,
             postprocess_docx=True,
         )
@@ -61,11 +74,24 @@ def build_expanded_tex(
     main_text: str,
     introduction_text: str,
     cover_image: Path | None = None,
-) -> str:
+    tikz_output_dir: Path | None = None,
+    return_tikz_report: bool = False,
+):
     fields = extract_tjuthesis_fields(introduction_text)
     body = extract_body_after_mainmatter(main_text)
     body = expand_includes(body, project_dir)
     body = cleanup_template_latex(body)
+    if tikz_output_dir is not None:
+        body, tikz_report = render_tikz_figures(
+            body,
+            project_dir=project_dir,
+            output_dir=tikz_output_dir,
+            preamble_text=main_text,
+        )
+    else:
+        from .tikz_renderer import TikzRenderReport
+
+        tikz_report = TikzRenderReport()
 
     parts = [
         "\\documentclass{book}",
@@ -85,7 +111,10 @@ def build_expanded_tex(
         body,
         "\\end{document}",
     ]
-    return "\n\n".join(part for part in parts if part.strip())
+    expanded = "\n\n".join(part for part in parts if part.strip())
+    if return_tikz_report:
+        return expanded, tikz_report
+    return expanded
 
 
 def extract_tjuthesis_fields(text: str) -> dict[str, str]:

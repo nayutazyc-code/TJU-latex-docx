@@ -78,6 +78,7 @@ def convert_project(config: ConversionConfig) -> ConversionResult:
                 stderr=str(exc),
                 returncode=None,
                 notes=prepared.notes,
+                warnings=prepared.warnings,
             )
             raise ConversionError(f"Pandoc failed to start: {exc}", log_path) from exc
 
@@ -102,6 +103,7 @@ def convert_project(config: ConversionConfig) -> ConversionResult:
                 *postprocess_notes,
             ),
             warnings=(
+                *prepared.warnings,
                 *citation_audit.warnings,
                 *postprocess_warnings,
             ),
@@ -121,6 +123,7 @@ def convert_project(config: ConversionConfig) -> ConversionResult:
         stdout=process.stdout,
         stderr=process.stderr,
         warnings=(
+            *prepared.warnings,
             *citation_audit.warnings,
             *postprocess_warnings,
         ),
