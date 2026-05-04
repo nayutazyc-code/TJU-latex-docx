@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 import queue
 import threading
@@ -175,7 +176,7 @@ class ConverterApp(tk.Tk):
         if self.output_docx.get():
             return
         project = Path(self.project_dir.get()) if self.project_dir.get() else main_tex.parent
-        self.output_docx.set(str(resolve_export_docx(main_tex.with_suffix(".docx"), project)))
+        self.output_docx.set(str(resolve_export_docx(main_tex.with_suffix(".docx"), project, datetime.now())))
 
     def _install_pandoc_in_background(self) -> None:
         if self._is_busy:

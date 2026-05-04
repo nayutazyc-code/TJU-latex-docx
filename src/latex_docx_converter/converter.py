@@ -130,7 +130,7 @@ def convert_project(config: ConversionConfig) -> ConversionResult:
 def normalize_config(config: ConversionConfig) -> ConversionConfig:
     project_dir = config.project_dir.expanduser().resolve()
     main_tex = resolve_against_project(config.main_tex, project_dir)
-    output_docx = resolve_export_docx(config.output_docx, project_dir)
+    output_docx = resolve_export_docx(config.output_docx, project_dir, datetime.now())
     reference_docx = resolve_optional(config.reference_docx, project_dir) or find_default_reference_docx(project_dir)
     bibliography = resolve_optional(config.bibliography, project_dir) or find_default_bibliography(project_dir)
     csl = resolve_optional(config.csl, project_dir) or find_default_csl(project_dir)
@@ -216,8 +216,7 @@ def relative_or_absolute(path: Path, base: Path) -> Path:
 
 
 def make_log_path(output_docx: Path) -> Path:
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    return output_docx.parent / "logs" / f"{output_docx.stem}-pandoc-{timestamp}.log"
+    return output_docx.parent / "logs" / f"{output_docx.stem}-pandoc.log"
 
 
 def write_log(
@@ -273,9 +272,16 @@ def export_dir(project_dir: Path) -> Path:
     return project_dir / "docx导出"
 
 
-def resolve_export_docx(output_docx: Path, project_dir: Path) -> Path:
+def resolve_export_docx(output_docx: Path, project_dir: Path, timestamp: datetime | None = None) -> Path:
     expanded = output_docx.expanduser()
     filename = expanded.name if expanded.name else f"{project_dir.name}.docx"
     if not filename.lower().endswith(".docx"):
         filename = f"{filename}.docx"
-    return (export_dir(project_dir) / filename).resolve()
+    run_timestamp = (timestamp or datetime.now()).strftime("%Y%m%d-%H%M%S")
+    run_dir_name = f"{run_timestamp}-{safe_stem(Path(filename).stem)}"
+    return (export_dir(project_dir) / run_dir_name / filename).resolve()
+
+
+def safe_stem(stem: str) -> str:
+    safe = "".join(char if char.isalnum() or char in ("-", "_") else "-" for char in stem).strip("-")
+    return safe or "export"

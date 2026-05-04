@@ -12,7 +12,7 @@
 - 自动识别 TJUThesis 本科模板，预处理 `\makecover`、`\makeabstract`、`\figuremacro`、`\tablemacro` 等模板宏，补入封面、摘要和参考文献插入点。
 - TJUThesis 模式下会执行 Word 后处理：插入可更新目录字段、套用天津大学模板关键样式、移动参考文献条目到“参考文献”标题下。
 - 自动发现常用默认文件：项目中的 `reference.bib`、桌面 `编写latex` 目录下的 GB/T 7714 CSL 和天津大学 Word 模板。
-- 导出文件统一保存到项目目录下的 `docx导出/`，Pandoc 日志保存到 `docx导出/logs/`，方便和 LaTeX 源文件分开管理。
+- 每次导出都会在项目目录下的 `docx导出/` 中创建一个独立时间戳目录，DOCX 和日志都保存在该目录内，方便和 LaTeX 源文件分开管理。
 
 ## 安装与运行
 
@@ -43,8 +43,8 @@ latex-docx-converter
 导出完成后，文件默认位于：
 
 ```text
-论文项目/docx导出/主文件名.docx
-论文项目/docx导出/logs/主文件名-pandoc-时间.log
+论文项目/docx导出/时间戳-主文件名/主文件名.docx
+论文项目/docx导出/时间戳-主文件名/logs/主文件名-pandoc.log
 ```
 
 ## 已知限制

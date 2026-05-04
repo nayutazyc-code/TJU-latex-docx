@@ -1,3 +1,4 @@
+from datetime import datetime
 from pathlib import Path
 import tempfile
 import unittest
@@ -78,17 +79,22 @@ class ConverterCommandTests(unittest.TestCase):
             )
             log_path = make_log_path(config.output_docx)
 
-            self.assertEqual(config.output_docx, (root / "docx导出" / "main.docx").resolve())
-            self.assertEqual(log_path.parent, (root / "docx导出" / "logs").resolve())
+            self.assertEqual(config.output_docx.parent.parent, (root / "docx导出").resolve())
+            self.assertRegex(config.output_docx.parent.name, r"^\d{8}-\d{6}-main$")
+            self.assertEqual(config.output_docx.name, "main.docx")
+            self.assertEqual(log_path, config.output_docx.parent / "logs" / "main-pandoc.log")
 
     def test_resolve_export_docx_uses_selected_filename_only(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             chosen = Path("/elsewhere/custom-name.docx")
 
-            output = resolve_export_docx(chosen, root)
+            output = resolve_export_docx(chosen, root, datetime(2026, 5, 4, 18, 52, 30))
 
-            self.assertEqual(output, (root / "docx导出" / "custom-name.docx").resolve())
+            self.assertEqual(
+                output,
+                (root / "docx导出" / "20260504-185230-custom-name" / "custom-name.docx").resolve(),
+            )
 
     def test_normalize_config_uses_default_optional_files(self):
         with tempfile.TemporaryDirectory() as tmp:
