@@ -335,6 +335,17 @@ class WordPostprocessTests(unittest.TestCase):
             self.assertIn('w:left="420"', styles_xml)
             self.assertIn('w:hanging="420"', styles_xml)
 
+    def test_postprocess_replaces_bibliography_tabs_with_spaces(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            docx = Path(tmp) / "tabs.docx"
+            create_minimal_docx(docx, [("参考文献", "36"), ("[10]\t陈科. 工地扬尘管控措施效果量化研究[J].", None)])
+
+            postprocess_docx(docx, WordPostprocessProfile())
+            document_xml = read_docx_xml(docx, "word/document.xml")
+
+            self.assertIn("[10] 陈科", document_xml)
+            self.assertNotIn("\t", document_xml)
+
 
 def create_minimal_docx(path: Path, paragraphs: list[tuple[str, str | None]]) -> None:
     body = "".join(make_paragraph_xml(text, style) for text, style in paragraphs)

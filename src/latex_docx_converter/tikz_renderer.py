@@ -36,15 +36,16 @@ def render_tikz_figures(
         return text, TikzRenderReport(notes=("No TikZ figures detected.",))
 
     xelatex = shutil.which("xelatex")
+    gs = shutil.which("gs")
     sips = shutil.which("sips")
     if not xelatex:
         return text, TikzRenderReport(
             warnings=("TikZ figures detected, but xelatex was not found; figures were left as LaTeX source."),
             failed_count=len(figures),
         )
-    if not sips:
+    if not gs and not sips:
         return text, TikzRenderReport(
-            warnings=("TikZ figures detected, but sips was not found; figures were left as LaTeX source."),
+            warnings=("TikZ figures detected, but neither Ghostscript nor sips was found; figures were left as LaTeX source."),
             failed_count=len(figures),
         )
 
@@ -65,6 +66,7 @@ def render_tikz_figures(
             work_dir=output_dir / f"_build-{figure.index}",
             image_path=image_path,
             xelatex=xelatex,
+            gs=gs,
             sips=sips,
             tikz_libraries=tikz_libraries,
         )
@@ -73,7 +75,7 @@ def render_tikz_figures(
             rendered_count += 1
             notes.append(
                 f"TikZ figure rendered: label={figure.label or '<none>'}, "
-                f"caption={figure.caption or '<none>'}, image={image_path}"
+                f"caption={figure.caption or '<none>'}, image={image_path}, dpi=300"
             )
         else:
             failed_count += 1
@@ -132,7 +134,8 @@ def render_one_figure(
     work_dir: Path,
     image_path: Path,
     xelatex: str,
-    sips: str,
+    gs: str | None,
+    sips: str | None,
     tikz_libraries: str,
 ) -> str | None:
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -152,18 +155,57 @@ def render_one_figure(
         (work_dir / "xelatex-output.log").write_text(output, encoding="utf-8")
         return f"xelatex failed: {first_error_line(output)}"
 
-    convert_process = subprocess.run(
-        [sips, "-s", "format", "png", str(pdf_path), "--out", str(image_path)],
-        cwd=project_dir,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if convert_process.returncode != 0 or not image_path.exists():
-        output = (convert_process.stdout or "") + "\n" + (convert_process.stderr or "")
+    return convert_pdf_to_png(pdf_path, image_path, project_dir, work_dir, gs, sips)
+
+
+def convert_pdf_to_png(
+    pdf_path: Path,
+    image_path: Path,
+    project_dir: Path,
+    work_dir: Path,
+    gs: str | None,
+    sips: str | None,
+) -> str | None:
+    if gs:
+        process = subprocess.run(
+            [
+                gs,
+                "-dSAFER",
+                "-dBATCH",
+                "-dNOPAUSE",
+                "-sDEVICE=pngalpha",
+                "-r300",
+                "-dTextAlphaBits=4",
+                "-dGraphicsAlphaBits=4",
+                f"-sOutputFile={image_path}",
+                str(pdf_path),
+            ],
+            cwd=project_dir,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if process.returncode == 0 and image_path.exists():
+            return None
+        output = (process.stdout or "") + "\n" + (process.stderr or "")
+        (work_dir / "ghostscript-output.log").write_text(output, encoding="utf-8")
+        if not sips:
+            return f"ghostscript failed: {first_error_line(output)}"
+
+    if sips:
+        process = subprocess.run(
+            [sips, "-s", "format", "png", str(pdf_path), "--out", str(image_path)],
+            cwd=project_dir,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if process.returncode == 0 and image_path.exists():
+            return None
+        output = (process.stdout or "") + "\n" + (process.stderr or "")
         (work_dir / "sips-output.log").write_text(output, encoding="utf-8")
         return f"sips failed: {first_error_line(output)}"
-    return None
+    return "no PDF-to-PNG converter was available"
 
 
 def build_standalone_tex(figure_content: str, tikz_libraries: str) -> str:

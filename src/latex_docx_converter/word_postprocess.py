@@ -351,11 +351,29 @@ def apply_heading_paragraph_format(paragraph: ET.Element, level: int) -> None:
 
 
 def apply_reference_paragraph_format(element: ET.Element) -> None:
+    normalize_bibliography_text(element)
     set_paragraph_indentation(element, left="420", hanging="420", first_line_chars="0")
     set_paragraph_spacing(element, before_lines="0", line="400", line_rule="exact")
     ind = ensure_ppr(element).find("w:ind", NS)
     if ind is not None and q("firstLine") in ind.attrib:
         del ind.attrib[q("firstLine")]
+
+
+def normalize_bibliography_text(element: ET.Element) -> None:
+    if not is_paragraph(element):
+        return
+    text = element_text(element)
+    if not text:
+        return
+    text = re.sub(r"\s*\t\s*", " ", text)
+    text = re.sub(r"^(\[\d+\])\s+", r"\1 ", text)
+    ppr = element.find("w:pPr", NS)
+    for child in list(element):
+        if child is not ppr:
+            element.remove(child)
+    run = ET.SubElement(element, q("r"))
+    text_node = ET.SubElement(run, q("t"))
+    text_node.text = text
 
 
 def set_paragraph_alignment(paragraph: ET.Element, value: str) -> None:
