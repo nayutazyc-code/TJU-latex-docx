@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "latex-docx-converter"
+version = "0.1.0"
+description = "Tkinter desktop tool for exporting LaTeX thesis projects to DOCX via Pandoc."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pypandoc>=1.15",
+]
+
+[project.optional-dependencies]
+dev = []
+packaging = [
+    "pyinstaller>=6.0",
+]
+
+[project.scripts]
+latex-docx-converter = "latex_docx_converter.gui:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

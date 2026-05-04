@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.DS_Store
+
+# Local build artifacts and downloaded installers
+build/
+dist/
+*.pkg
+
+# Generated conversion outputs
+docx导出/
+*.docx
+*.log
