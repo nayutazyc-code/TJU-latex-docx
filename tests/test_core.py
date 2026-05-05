@@ -3,6 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from zipfile import ZIP_DEFLATED, ZipFile
+import xml.etree.ElementTree as ET
 
 from latex_docx_converter.citation import audit_citations
 from latex_docx_converter.converter import (
@@ -386,10 +387,12 @@ class WordPostprocessTests(unittest.TestCase):
             document_xml = read_docx_xml(docx, "word/document.xml")
 
             self.assertIn("Copied first two pages from reference DOCX.", result.notes)
-            self.assertIn("模板封面第一页", document_xml)
-            self.assertIn("模板独创性声明第二页", document_xml)
+            self.assertIn("本科生毕业设计", document_xml)
+            self.assertIn("独创性声明", document_xml)
             self.assertIn("摘  要", document_xml)
             self.assertNotIn("请复制粘贴学校 Word 模板", document_xml)
+            self.assertIsNone(paragraph_style(docx, "本科生毕业设计"))
+            self.assertIsNone(paragraph_style(docx, "独创性声明"))
 
 
 def create_minimal_docx(path: Path, paragraphs: list[tuple[str, str | None]]) -> None:
@@ -427,9 +430,9 @@ def create_reference_frontmatter_docx(path: Path) -> None:
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
         "<w:body>"
-        "<w:p><w:r><w:t>模板封面第一页</w:t></w:r></w:p>"
+        "<w:p><w:r><w:t>本科生毕业设计</w:t></w:r></w:p>"
         "<w:p><w:pPr><w:sectPr/></w:pPr></w:p>"
-        "<w:p><w:r><w:t>模板独创性声明第二页</w:t></w:r></w:p>"
+        "<w:p><w:r><w:t>独创性声明</w:t></w:r></w:p>"
         "<w:p><w:pPr><w:sectPr/></w:pPr></w:p>"
         "<w:p><w:r><w:t>模板摘要第三页</w:t></w:r></w:p>"
         "<w:sectPr/>"
@@ -438,6 +441,18 @@ def create_reference_frontmatter_docx(path: Path) -> None:
     with ZipFile(path, "w", ZIP_DEFLATED) as docx:
         docx.writestr("word/document.xml", document)
         docx.writestr("word/_rels/document.xml.rels", '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>')
+
+
+def paragraph_style(path: Path, text: str) -> str | None:
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    with ZipFile(path) as docx:
+        root = ET.fromstring(docx.read("word/document.xml"))
+    for paragraph in root.findall(".//w:p", ns):
+        paragraph_text = "".join(node.text or "" for node in paragraph.findall(".//w:t", ns))
+        if paragraph_text == text:
+            style = paragraph.find("w:pPr/w:pStyle", ns)
+            return style.get("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val") if style is not None else None
+    return None
 
 
 def make_paragraph_xml(text: str, style: str | None = None) -> str:

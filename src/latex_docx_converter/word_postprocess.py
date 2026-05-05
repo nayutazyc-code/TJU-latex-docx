@@ -58,16 +58,17 @@ def postprocess_docx(
 
             document_root = ET.fromstring(document_xml)
             package_additions: dict[str, bytes] = {}
+            protected_frontmatter_count = 0
             if profile.reference_docx is not None and profile.reference_docx.is_file():
                 frontmatter = load_reference_frontmatter(profile.reference_docx, rels_xml)
                 if frontmatter is not None:
-                    insert_reference_frontmatter(document_root, frontmatter.elements)
+                    protected_frontmatter_count = insert_reference_frontmatter(document_root, frontmatter.elements)
                     rels_xml = frontmatter.rels_xml
                     package_additions.update(frontmatter.package_additions)
                     notes.append("Copied first two pages from reference DOCX.")
                 else:
                     warnings.append("Could not detect the first two template pages in reference DOCX.")
-            toc_inserted, bibliography_moved = process_document_xml(document_root)
+            toc_inserted, bibliography_moved = process_document_xml(document_root, protected_frontmatter_count)
             new_document_xml = xml_bytes(document_root)
 
             new_settings_xml = ensure_update_fields(settings_xml)
@@ -171,14 +172,15 @@ def contains_section_properties(element: ET.Element) -> bool:
     return element.tag == q("sectPr") or element.find(".//w:sectPr", NS) is not None
 
 
-def insert_reference_frontmatter(root: ET.Element, elements: tuple[ET.Element, ...]) -> None:
+def insert_reference_frontmatter(root: ET.Element, elements: tuple[ET.Element, ...]) -> int:
     body = root.find("w:body", NS)
     if body is None:
-        return
+        return 0
     remove_generated_frontmatter_placeholder(body)
     insert_at = 0
     for offset, element in enumerate(elements):
         body.insert(insert_at + offset, element)
+    return len(elements)
 
 
 def remove_generated_frontmatter_placeholder(body: ET.Element) -> None:
@@ -329,14 +331,14 @@ def next_relationship_id(root: ET.Element) -> str:
     return f"rIdFront{index}"
 
 
-def process_document_xml(root: ET.Element) -> tuple[bool, bool]:
+def process_document_xml(root: ET.Element, protected_frontmatter_count: int = 0) -> tuple[bool, bool]:
     body = root.find("w:body", NS)
     if body is None:
         return False, False
 
     remove_table_of_contents_heading(body)
     bibliography_moved = move_bibliography_entries(body)
-    apply_tju_styles(body)
+    apply_tju_styles(body, protected_frontmatter_count)
     toc_inserted = insert_toc_field(body)
     remove_marker_paragraphs(body)
     return toc_inserted, bibliography_moved
@@ -394,9 +396,11 @@ def move_bibliography_entries(body: ET.Element) -> bool:
     return True
 
 
-def apply_tju_styles(body: ET.Element) -> None:
+def apply_tju_styles(body: ET.Element, skip_first: int = 0) -> None:
     children = list(body)
     for index, child in enumerate(children):
+        if index < skip_first:
+            continue
         if not is_paragraph(child):
             continue
         text = normalized_text(element_text(child))
