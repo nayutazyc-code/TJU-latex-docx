@@ -316,12 +316,15 @@ class WordPostprocessTests(unittest.TestCase):
             document_xml = read_docx_xml(docx, "word/document.xml")
             styles_xml = read_docx_xml(docx, "word/styles.xml")
 
-            self.assertIn('<w:pStyle w:val="2"', document_xml)
-            self.assertIn('<w:pStyle w:val="3"', document_xml)
-            self.assertIn('<w:pStyle w:val="4"', document_xml)
+            self.assertIn('<w:pStyle w:val="37"', document_xml)
+            self.assertIn('<w:pStyle w:val="38"', document_xml)
+            self.assertIn('<w:pStyle w:val="39"', document_xml)
             self.assertIn('<w:pStyle w:val="8"', document_xml)
             self.assertNotIn("<w:numPr", document_xml)
             self.assertNotIn("<w:numPr", styles_xml)
+            self.assertIn('<w:outlineLvl w:val="0"', document_xml)
+            self.assertIn('<w:outlineLvl w:val="1"', document_xml)
+            self.assertIn('<w:outlineLvl w:val="2"', document_xml)
             self.assertIn('w:before="600"', document_xml)
             self.assertIn('w:before="360"', document_xml)
             self.assertIn('w:before="240"', document_xml)
@@ -401,6 +404,31 @@ class WordPostprocessTests(unittest.TestCase):
             self.assertIn('w:sz w:val="28"', document_xml)
             self.assertIn("<w:b", document_xml)
             self.assertIn('w:firstLine="0"', document_xml)
+            self.assertEqual(document_xml.count("<w:pageBreakBefore"), 2)
+
+    def test_postprocess_keeps_body_headings_out_of_abstract_context(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            docx = Path(tmp) / "abstract-headings.docx"
+            create_minimal_docx(
+                docx,
+                [
+                    ("摘 要", "36"),
+                    ("中文摘要内容。", "40"),
+                    ("关键词：粉尘，施工", "40"),
+                    ("ABSTRACT", "36"),
+                    ("english abstract content.", "40"),
+                    ("KEY WORDS: dust; construction", "40"),
+                    ("第一章 绪论", "2"),
+                    ("1.1  研究背景", "3"),
+                    ("1.1.1  研究意义", "4"),
+                ],
+            )
+
+            postprocess_docx(docx, WordPostprocessProfile())
+
+            self.assertEqual(paragraph_style(docx, "第一章 绪论"), "37")
+            self.assertEqual(paragraph_style(docx, "1.1  研究背景"), "38")
+            self.assertEqual(paragraph_style(docx, "1.1.1  研究意义"), "39")
 
     def test_postprocess_copies_first_two_reference_pages(self):
         with tempfile.TemporaryDirectory() as tmp:

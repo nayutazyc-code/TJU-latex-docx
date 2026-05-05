@@ -420,18 +420,6 @@ def apply_tju_styles(body: ET.Element, skip_first: int = 0) -> None:
             set_paragraph_style(child, "36", outline_level=0, clear_numbering=True)
             apply_abstract_title_format(child, english=True)
             abstract_context = "en"
-        elif abstract_context == "cn" and is_chinese_keyword_paragraph(text):
-            set_paragraph_style(child, "40")
-            apply_keyword_paragraph_format(child, english=False)
-        elif abstract_context == "en" and is_english_keyword_paragraph(text):
-            set_paragraph_style(child, "40")
-            apply_keyword_paragraph_format(child, english=True)
-        elif abstract_context == "cn" and is_body_like_paragraph(text, child):
-            set_paragraph_style(child, "40")
-            apply_abstract_body_format(child, english=False)
-        elif abstract_context == "en" and is_body_like_paragraph(text, child):
-            set_paragraph_style(child, "40")
-            apply_abstract_body_format(child, english=True)
         elif text in {
             "封面与独创性声明",
             "独创性声明",
@@ -451,33 +439,34 @@ def apply_tju_styles(body: ET.Element, skip_first: int = 0) -> None:
             if text in {"致 谢", "致谢"}:
                 replace_paragraph_text(child, "致  谢")
             set_paragraph_style(child, "36", outline_level=0, clear_numbering=True)
+        elif is_heading_level_1(text, style):
+            abstract_context = None
+            set_paragraph_style(child, "37", outline_level=0, clear_numbering=True)
+            apply_heading_paragraph_format(child, 1)
+        elif style in {"3", "38"}:
+            abstract_context = None
+            set_paragraph_style(child, "38", outline_level=1, clear_numbering=True)
+            apply_heading_paragraph_format(child, 2)
+        elif style in {"4", "39"}:
+            abstract_context = None
+            set_paragraph_style(child, "39", outline_level=2, clear_numbering=True)
+            apply_heading_paragraph_format(child, 3)
         elif is_caption_like_paragraph(text, child, previous, next_element):
+            abstract_context = None
             set_paragraph_style(child, "8")
             apply_caption_paragraph_format(child)
-        elif style == "2" or re.match(r"^第[一二三四五六七八九十百\d]+章\b", text):
-            abstract_context = None
-            set_paragraph_style(child, "2", outline_level=0, clear_numbering=True)
-            apply_heading_paragraph_format(child, 1)
-        elif style == "3":
-            abstract_context = None
-            set_paragraph_style(child, "3", outline_level=1, clear_numbering=True)
-            apply_heading_paragraph_format(child, 2)
-        elif style == "4":
-            abstract_context = None
-            set_paragraph_style(child, "4", outline_level=2, clear_numbering=True)
-            apply_heading_paragraph_format(child, 3)
-        elif style == "38":
-            abstract_context = None
-            set_paragraph_style(child, "3", outline_level=1, clear_numbering=True)
-            apply_heading_paragraph_format(child, 2)
-        elif style == "39":
-            abstract_context = None
-            set_paragraph_style(child, "4", outline_level=2, clear_numbering=True)
-            apply_heading_paragraph_format(child, 3)
-        elif re.match(r"^第[一二三四五六七八九十百\d]+章\b", text):
-            abstract_context = None
-            set_paragraph_style(child, "2", outline_level=0, clear_numbering=True)
-            apply_heading_paragraph_format(child, 1)
+        elif abstract_context == "cn" and is_chinese_keyword_paragraph(text):
+            set_paragraph_style(child, "40")
+            apply_keyword_paragraph_format(child, english=False)
+        elif abstract_context == "en" and is_english_keyword_paragraph(text):
+            set_paragraph_style(child, "40")
+            apply_keyword_paragraph_format(child, english=True)
+        elif abstract_context == "cn" and is_body_like_paragraph(text, child):
+            set_paragraph_style(child, "40")
+            apply_abstract_body_format(child, english=False)
+        elif abstract_context == "en" and is_body_like_paragraph(text, child):
+            set_paragraph_style(child, "40")
+            apply_abstract_body_format(child, english=True)
         elif is_bibliography_entry(text):
             abstract_context = None
             set_paragraph_style(child, "44")
@@ -603,6 +592,13 @@ def replace_paragraph_runs(paragraph: ET.Element, runs: list[tuple[str, str, str
         text_node.text = text
 
 
+def clear_run_properties(paragraph: ET.Element) -> None:
+    for run in paragraph.findall(".//w:r", NS):
+        rpr = run.find("w:rPr", NS)
+        if rpr is not None:
+            run.remove(rpr)
+
+
 def set_paragraph_style(
     paragraph: ET.Element,
     style_id: str,
@@ -631,6 +627,7 @@ def set_paragraph_style(
 def apply_heading_paragraph_format(paragraph: ET.Element, level: int) -> None:
     ppr = ensure_ppr(paragraph)
     remove_child(ppr, "numPr")
+    clear_run_properties(paragraph)
     if level == 1:
         set_paragraph_alignment(paragraph, "center")
         set_paragraph_spacing(paragraph, before="600", after="600")
@@ -650,6 +647,7 @@ def apply_abstract_title_format(paragraph: ET.Element, english: bool) -> None:
     set_paragraph_alignment(paragraph, "center")
     set_paragraph_indentation(paragraph, left="0", first_line="0", first_line_chars="0")
     set_paragraph_spacing(paragraph, before="360", after="360")
+    set_page_break_before(paragraph)
     font = "Times New Roman" if english else "宋体"
     set_run_format(paragraph, east_asia_font=font, ascii_font="Times New Roman", size="44", bold=True)
 
@@ -911,6 +909,12 @@ def contains_visual(element: ET.Element) -> bool:
 
 def is_bibliography_entry(text: str) -> bool:
     return bool(re.match(r"^\[\d+\]\s+", strip_text(text)))
+
+
+def is_heading_level_1(text: str, style: str | None) -> bool:
+    if text in {"封面与独创性声明", "独创性声明", "目 录", "目录", "参考文献", "附 录", "附录", "致 谢", "致谢"}:
+        return False
+    return style in {"2", "37"} or bool(re.match(r"^第[一二三四五六七八九十百\d]+章\b", text))
 
 
 def is_chinese_keyword_paragraph(text: str) -> bool:
