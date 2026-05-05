@@ -305,8 +305,8 @@ class WordPostprocessTests(unittest.TestCase):
                 docx,
                 [
                     ("第一章 绪论", "2"),
-                    ("研究背景", "3"),
-                    ("研究意义", "4"),
+                    ("1.1 研究背景", "3"),
+                    ("1.1.1 研究意义", "4"),
                     ("图2-1  智能工地喷淋系统总体架构图", "CaptionedFigure"),
                     ("正文内容", None),
                 ],
@@ -328,8 +328,14 @@ class WordPostprocessTests(unittest.TestCase):
             self.assertIn('w:before="600"', document_xml)
             self.assertIn('w:before="360"', document_xml)
             self.assertIn('w:before="240"', document_xml)
-            self.assertEqual(paragraph_spacing(docx, "研究背景").get("line"), "240")
-            self.assertEqual(paragraph_spacing(docx, "研究背景").get("lineRule"), "auto")
+            self.assertIn('xml:space="preserve">第一章  绪论', document_xml)
+            self.assertIn('xml:space="preserve">  研究背景', document_xml)
+            self.assertIn('xml:space="preserve">  研究意义', document_xml)
+            self.assertEqual(paragraph_spacing(docx, "1.1  研究背景").get("line"), "240")
+            self.assertEqual(paragraph_spacing(docx, "1.1  研究背景").get("lineRule"), "auto")
+            self.assertEqual(paragraph_first_run_fonts(docx, "1.1  研究背景").get("ascii"), "黑体")
+            self.assertEqual(paragraph_first_run_fonts(docx, "1.1.1  研究意义").get("ascii"), "黑体")
+            self.assertEqual(paragraph_first_run_fonts(docx, "1.1  研究背景").get("eastAsia"), "黑体")
             self.assertIn("<w:pageBreakBefore", document_xml)
             self.assertIn('w:left="0"', document_xml)
             self.assertIn('w:firstLine="0"', document_xml)
@@ -432,7 +438,7 @@ class WordPostprocessTests(unittest.TestCase):
 
             postprocess_docx(docx, WordPostprocessProfile())
 
-            self.assertEqual(paragraph_style(docx, "第一章 绪论"), "37")
+            self.assertEqual(paragraph_style(docx, "第一章  绪论"), "37")
             self.assertEqual(paragraph_style(docx, "1.1  研究背景"), "38")
             self.assertEqual(paragraph_style(docx, "1.1.1  研究意义"), "39")
 
@@ -543,6 +549,21 @@ def paragraph_spacing(path: Path, text: str) -> dict[str, str]:
             if spacing is None:
                 return {}
             return {key.rsplit("}", 1)[-1]: value for key, value in spacing.attrib.items() if key.startswith(f"{{{w_ns}}}")}
+    return {}
+
+
+def paragraph_first_run_fonts(path: Path, text: str) -> dict[str, str]:
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    w_ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    with ZipFile(path) as docx:
+        root = ET.fromstring(docx.read("word/document.xml"))
+    for paragraph in root.findall(".//w:p", ns):
+        paragraph_text = "".join(node.text or "" for node in paragraph.findall(".//w:t", ns))
+        if paragraph_text == text:
+            fonts = paragraph.find("w:r/w:rPr/w:rFonts", ns)
+            if fonts is None:
+                return {}
+            return {key.rsplit("}", 1)[-1]: value for key, value in fonts.attrib.items() if key.startswith(f"{{{w_ns}}}")}
     return {}
 
 

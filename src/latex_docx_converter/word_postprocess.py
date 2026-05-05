@@ -644,6 +644,7 @@ def apply_heading_paragraph_format(paragraph: ET.Element, level: int) -> None:
     ppr = ensure_ppr(paragraph)
     remove_child(ppr, "numPr")
     clear_run_properties(paragraph)
+    normalize_heading_text_and_number(paragraph, level)
     if level == 1:
         set_paragraph_alignment(paragraph, "center")
         set_paragraph_spacing(paragraph, before="600", after="600")
@@ -658,6 +659,39 @@ def apply_heading_paragraph_format(paragraph: ET.Element, level: int) -> None:
         set_paragraph_alignment(paragraph, "left")
         set_paragraph_spacing(paragraph, before="240", after="240")
         set_paragraph_indentation(paragraph, left="0", first_line="0", first_line_chars="0")
+
+
+def normalize_heading_text_and_number(paragraph: ET.Element, level: int) -> None:
+    text = normalized_text(element_text(paragraph))
+    if level == 1:
+        match = re.match(r"^(第[一二三四五六七八九十百\d]+章)\s*(.+)$", text)
+        if match:
+            replace_paragraph_text(paragraph, f"{match.group(1)}  {match.group(2).strip()}")
+        return
+
+    match = re.match(r"^(\d+(?:\.\d+){1,2})\s*(.+)$", text)
+    if not match:
+        return
+    number, title = match.group(1), match.group(2).strip()
+    replace_heading_number_runs(paragraph, number, title)
+
+
+def replace_heading_number_runs(paragraph: ET.Element, number: str, title: str) -> None:
+    ppr = paragraph.find("w:pPr", NS)
+    for child in list(paragraph):
+        if child is not ppr:
+            paragraph.remove(child)
+
+    number_run = ET.SubElement(paragraph, q("r"))
+    number_rpr = ET.SubElement(number_run, q("rPr"))
+    set_rpr_fonts(number_rpr, east_asia_font="黑体", ascii_font="黑体")
+    number_text = ET.SubElement(number_run, q("t"))
+    number_text.text = number
+
+    title_run = ET.SubElement(paragraph, q("r"))
+    title_text = ET.SubElement(title_run, q("t"))
+    title_text.set(XML_SPACE, "preserve")
+    title_text.text = f"  {title}"
 
 
 def apply_abstract_title_format(paragraph: ET.Element, english: bool) -> None:
@@ -789,14 +823,7 @@ def set_rpr_format(
     size: str,
     bold: bool = False,
 ) -> None:
-    fonts = rpr.find("w:rFonts", NS)
-    if fonts is None:
-        fonts = ET.Element(q("rFonts"))
-        rpr.insert(0, fonts)
-    fonts.set(q("eastAsia"), east_asia_font)
-    fonts.set(q("ascii"), ascii_font)
-    fonts.set(q("hAnsi"), ascii_font)
-    fonts.set(q("cs"), ascii_font)
+    set_rpr_fonts(rpr, east_asia_font, ascii_font)
     sz = rpr.find("w:sz", NS)
     if sz is None:
         sz = ET.Element(q("sz"))
@@ -812,6 +839,17 @@ def set_rpr_format(
             rpr.append(ET.Element(q("b")))
         if rpr.find("w:bCs", NS) is None:
             rpr.append(ET.Element(q("bCs")))
+
+
+def set_rpr_fonts(rpr: ET.Element, east_asia_font: str, ascii_font: str) -> None:
+    fonts = rpr.find("w:rFonts", NS)
+    if fonts is None:
+        fonts = ET.Element(q("rFonts"))
+        rpr.insert(0, fonts)
+    fonts.set(q("eastAsia"), east_asia_font)
+    fonts.set(q("ascii"), ascii_font)
+    fonts.set(q("hAnsi"), ascii_font)
+    fonts.set(q("cs"), ascii_font)
 
 
 def set_paragraph_alignment(paragraph: ET.Element, value: str) -> None:
