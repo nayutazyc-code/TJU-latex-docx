@@ -113,6 +113,9 @@ def process_styles_xml(styles_xml: bytes) -> bytes:
     reference_style = root.find("w:style[@w:styleId='44']", NS)
     if reference_style is not None:
         apply_reference_paragraph_format(reference_style)
+    caption_style = root.find("w:style[@w:styleId='8']", NS)
+    if caption_style is not None:
+        apply_caption_paragraph_format(caption_style)
     return xml_bytes(root)
 
 
@@ -296,6 +299,8 @@ def make_text_paragraph(text: str, style_id: str | None = None) -> ET.Element:
         set_paragraph_style(p, style_id)
     run = ET.SubElement(p, q("r"))
     text_node = ET.SubElement(run, q("t"))
+    if "  " in text:
+        text_node.set(XML_SPACE, "preserve")
     text_node.text = text
     return p
 
@@ -357,7 +362,8 @@ def apply_caption_paragraph_format(paragraph: ET.Element) -> None:
     normalize_caption_text(paragraph)
     set_paragraph_alignment(paragraph, "center")
     set_paragraph_indentation(paragraph, left="0", first_line="0", first_line_chars="0")
-    set_paragraph_spacing(paragraph, before="120", after="120")
+    set_paragraph_spacing(paragraph, before="120", after="120", line="400", line_rule="exact")
+    set_run_format(paragraph, east_asia_font="宋体", ascii_font="Times New Roman", size="21")
 
 
 def normalize_caption_text(paragraph: ET.Element) -> None:
@@ -391,6 +397,51 @@ def normalize_bibliography_text(element: ET.Element) -> None:
     run = ET.SubElement(element, q("r"))
     text_node = ET.SubElement(run, q("t"))
     text_node.text = text
+
+
+def set_run_format(element: ET.Element, east_asia_font: str, ascii_font: str, size: str) -> None:
+    if element.tag == q("style"):
+        set_rpr_format(ensure_rpr(element), east_asia_font, ascii_font, size)
+        return
+
+    runs = element.findall("w:r", NS)
+    if not runs:
+        runs = [ET.SubElement(element, q("r"))]
+    for run in runs:
+        rpr = run.find("w:rPr", NS)
+        if rpr is None:
+            rpr = ET.Element(q("rPr"))
+            run.insert(0, rpr)
+        set_rpr_format(rpr, east_asia_font, ascii_font, size)
+
+
+def ensure_rpr(element: ET.Element) -> ET.Element:
+    rpr = element.find("w:rPr", NS)
+    if rpr is None:
+        rpr = ET.Element(q("rPr"))
+        element.append(rpr)
+    return rpr
+
+
+def set_rpr_format(rpr: ET.Element, east_asia_font: str, ascii_font: str, size: str) -> None:
+    fonts = rpr.find("w:rFonts", NS)
+    if fonts is None:
+        fonts = ET.Element(q("rFonts"))
+        rpr.insert(0, fonts)
+    fonts.set(q("eastAsia"), east_asia_font)
+    fonts.set(q("ascii"), ascii_font)
+    fonts.set(q("hAnsi"), ascii_font)
+    fonts.set(q("cs"), ascii_font)
+    sz = rpr.find("w:sz", NS)
+    if sz is None:
+        sz = ET.Element(q("sz"))
+        rpr.append(sz)
+    sz.set(q("val"), size)
+    sz_cs = rpr.find("w:szCs", NS)
+    if sz_cs is None:
+        sz_cs = ET.Element(q("szCs"))
+        rpr.append(sz_cs)
+    sz_cs.set(q("val"), size)
 
 
 def set_paragraph_alignment(paragraph: ET.Element, value: str) -> None:

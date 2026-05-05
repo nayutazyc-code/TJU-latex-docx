@@ -330,6 +330,13 @@ class WordPostprocessTests(unittest.TestCase):
             self.assertIn('w:firstLineChars="0"', document_xml)
             self.assertIn('w:jc w:val="center"', document_xml)
             self.assertIn('xml:space="preserve">图2-1  智能工地喷淋系统总体架构图', document_xml)
+            self.assertIn('w:eastAsia="宋体"', document_xml)
+            self.assertIn('w:ascii="Times New Roman"', document_xml)
+            self.assertIn('w:hAnsi="Times New Roman"', document_xml)
+            self.assertIn('w:sz w:val="21"', document_xml)
+            self.assertIn('w:line="400"', document_xml)
+            self.assertIn('w:lineRule="exact"', document_xml)
+            self.assertIn('w:eastAsia="宋体"', styles_xml)
 
     def test_postprocess_formats_bibliography_entries_with_hanging_indent(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -380,6 +387,7 @@ def create_minimal_docx(path: Path, paragraphs: list[tuple[str, str | None]]) ->
         '<w:style w:type="paragraph" w:styleId="37"><w:name w:val="大标题"/><w:pPr><w:numPr/></w:pPr></w:style>'
         '<w:style w:type="paragraph" w:styleId="38"><w:name w:val="二级标题"/><w:pPr><w:numPr/></w:pPr></w:style>'
         '<w:style w:type="paragraph" w:styleId="39"><w:name w:val="三级标题"/><w:pPr><w:numPr/></w:pPr></w:style>'
+        '<w:style w:type="paragraph" w:styleId="8"><w:name w:val="caption"/></w:style>'
         '<w:style w:type="paragraph" w:styleId="44"><w:name w:val="List Paragraph"/></w:style>'
         '</w:styles>'
     )
