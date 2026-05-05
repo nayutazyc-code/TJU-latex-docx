@@ -272,6 +272,7 @@ def cleanup_template_latex(text: str) -> str:
     text = replace_multi_argument_macro(text, "texorpdfstring", lambda groups: groups[0], group_count=2)
     text = number_mainmatter_chapters(text)
     text = number_mainmatter_sections(text)
+    text = number_equations(text)
     text = number_float_captions(text)
     text = re.sub(r"\\(?:begin|end)\{appendixenv\}", "", text)
     text = re.sub(r"\\(?:frontmatter|mainmatter|backmatter|clearpage)\b", "", text)
@@ -517,6 +518,82 @@ def number_caption_in_environment(text: str, prefix: str) -> str:
     if re.match(r"^(图|表)\s*\d+[-.]\d+", clean_caption):
         return text
     return text[:group_start] + "{" + f"{prefix}  {clean_caption}" + "}" + text[group_end:]
+
+
+def number_equations(text: str) -> str:
+    result: list[str] = []
+    index = 0
+    chapter_number = 0
+    equation_number = 0
+    numbered = True
+
+    while index < len(text):
+        matches = find_next_equation_targets(text, index)
+        if not matches:
+            result.append(text[index:])
+            return "".join(result)
+
+        start, kind = min(matches, key=lambda item: item[0])
+        result.append(text[index:start])
+        if kind == "backmatter":
+            result.append("\\backmatter")
+            index = start + len("\\backmatter")
+            numbered = False
+            continue
+        if kind == "chapter":
+            parsed = parse_command_groups(text, start, "chapter", 1)
+            if parsed is None:
+                result.append(text[start : start + len("\\chapter")])
+                index = start + len("\\chapter")
+                continue
+            groups, end = parsed
+            chapter_number = chapter_number_from_title(clean_heading_title(groups[0])) or chapter_number + 1
+            equation_number = 0
+            result.append(text[start:end])
+            index = end
+            continue
+
+        environment_end = find_environment_end(text, start, kind)
+        if environment_end is None:
+            result.append(text[start:])
+            return "".join(result)
+        environment_text = text[start:environment_end]
+        if numbered and chapter_number and not has_equation_tag(environment_text):
+            equation_number += 1
+            environment_text = insert_equation_tag(environment_text, f"{chapter_number}-{equation_number}", kind)
+        result.append(environment_text)
+        index = environment_end
+
+    return "".join(result)
+
+
+def find_next_equation_targets(text: str, index: int) -> list[tuple[int, str]]:
+    targets: list[tuple[int, str]] = []
+    for token, kind in (
+        ("\\chapter", "chapter"),
+        ("\\backmatter", "backmatter"),
+        ("\\begin{equation}", "equation"),
+    ):
+        found = text.find(token, index)
+        if found != -1:
+            targets.append((found, kind))
+    return targets
+
+
+def has_equation_tag(text: str) -> bool:
+    return "\\tag{" in text or "\\tag*{" in text
+
+
+def insert_equation_tag(text: str, number: str, environment: str) -> str:
+    label_match = re.search(r"\\label\{[^{}]+\}", text)
+    tag = f"\\qquad\\mathrm{{({number})}}\n"
+    if label_match:
+        return text[: label_match.start()] + tag + text[label_match.start() :]
+    end_token = f"\\end{{{environment}}}"
+    end_index = text.rfind(end_token)
+    if end_index == -1:
+        return text
+    return text[:end_index] + tag + text[end_index:]
 
 
 def parse_caption_command(text: str) -> tuple[str, int, int] | None:

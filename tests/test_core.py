@@ -15,7 +15,12 @@ from latex_docx_converter.converter import (
 )
 from latex_docx_converter.defaults import find_default_bibliography, find_default_csl, find_default_reference_docx
 from latex_docx_converter.scanner import find_main_tex_candidates
-from latex_docx_converter.tjuthesis import build_expanded_tex, extract_tjuthesis_fields, prepare_tjuthesis_input
+from latex_docx_converter.tjuthesis import (
+    build_expanded_tex,
+    extract_tjuthesis_fields,
+    number_equations,
+    prepare_tjuthesis_input,
+)
 from latex_docx_converter.tikz_renderer import find_tikz_figures, make_includegraphics_figure
 from latex_docx_converter.word_postprocess import WordPostprocessProfile, postprocess_docx
 
@@ -154,6 +159,7 @@ class TjuThesisTests(unittest.TestCase):
                 "\\chapter{绪论}\n"
                 "\\section{研究背景}\n"
                 "\\subsection{研究意义}\n"
+                "\\begin{equation}\nE=mc^2\n\\label{eq:energy}\n\\end{equation}\n"
                 "\\begin{figure}\\caption{系统架构图}\\label{fig:a}\\end{figure}\n"
                 "\\begin{table}\\caption{实验数据表}\\label{tab:a}\\end{table}\n"
                 "正文",
@@ -181,8 +187,32 @@ class TjuThesisTests(unittest.TestCase):
             self.assertIn("\\chapter{第一章 绪论}", expanded)
             self.assertIn("\\section{1.1  研究背景}", expanded)
             self.assertIn("\\subsection{1.1.1  研究意义}", expanded)
+            self.assertIn("\\qquad\\mathrm{(1-1)}\n\\label{eq:energy}", expanded)
             self.assertIn("\\caption{图1-1  系统架构图}", expanded)
             self.assertIn("\\caption{表1-1  实验数据表}", expanded)
+
+    def test_numbers_equations_by_chapter(self):
+        text = (
+            "\\chapter{第一章 绪论}\n"
+            "\\begin{equation}a=b\\label{eq:a}\\end{equation}\n"
+            "\\begin{equation}c=d\\end{equation}\n"
+            "\\chapter{第二章 方法}\n"
+            "\\begin{equation}e=f\\label{eq:e}\\end{equation}\n"
+        )
+
+        numbered = number_equations(text)
+
+        self.assertIn("\\qquad\\mathrm{(1-1)}\n\\label{eq:a}", numbered)
+        self.assertIn("c=d\\qquad\\mathrm{(1-2)}", numbered)
+        self.assertIn("\\qquad\\mathrm{(2-1)}\n\\label{eq:e}", numbered)
+
+    def test_keeps_existing_equation_tags(self):
+        text = "\\chapter{第一章 绪论}\n\\begin{equation}a=b\\tag{A}\\label{eq:a}\\end{equation}"
+
+        numbered = number_equations(text)
+
+        self.assertIn("\\tag{A}", numbered)
+        self.assertNotIn("\\tag{1-1}", numbered)
 
     def test_prepare_tjuthesis_marks_postprocessing_required(self):
         with tempfile.TemporaryDirectory() as tmp:
