@@ -404,7 +404,11 @@ class WordPostprocessTests(unittest.TestCase):
             self.assertIn('w:sz w:val="28"', document_xml)
             self.assertIn("<w:b", document_xml)
             self.assertIn('w:firstLine="0"', document_xml)
+            self.assertIn('w:beforeLines="20"', document_xml)
             self.assertEqual(document_xml.count("<w:pageBreakBefore"), 2)
+            paragraphs = paragraph_texts(docx)
+            self.assertEqual(paragraphs[paragraphs.index("关键词：粉尘，施工，控制") - 1], "")
+            self.assertEqual(paragraphs[paragraphs.index("KEY WORDS: Dust; Construction; Control") - 1], "")
 
     def test_postprocess_keeps_body_headings_out_of_abstract_context(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -516,6 +520,13 @@ def paragraph_style(path: Path, text: str) -> str | None:
             style = paragraph.find("w:pPr/w:pStyle", ns)
             return style.get("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val") if style is not None else None
     return None
+
+
+def paragraph_texts(path: Path) -> list[str]:
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    with ZipFile(path) as docx:
+        root = ET.fromstring(docx.read("word/document.xml"))
+    return ["".join(node.text or "" for node in paragraph.findall(".//w:t", ns)) for paragraph in root.findall(".//w:p", ns)]
 
 
 def make_paragraph_xml(text: str, style: str | None = None) -> str:

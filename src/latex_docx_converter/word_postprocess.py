@@ -456,9 +456,11 @@ def apply_tju_styles(body: ET.Element, skip_first: int = 0) -> None:
             set_paragraph_style(child, "8")
             apply_caption_paragraph_format(child)
         elif abstract_context == "cn" and is_chinese_keyword_paragraph(text):
+            ensure_blank_paragraph_before(body, child)
             set_paragraph_style(child, "40")
             apply_keyword_paragraph_format(child, english=False)
         elif abstract_context == "en" and is_english_keyword_paragraph(text):
+            ensure_blank_paragraph_before(body, child)
             set_paragraph_style(child, "40")
             apply_keyword_paragraph_format(child, english=True)
         elif abstract_context == "cn" and is_body_like_paragraph(text, child):
@@ -592,6 +594,20 @@ def replace_paragraph_runs(paragraph: ET.Element, runs: list[tuple[str, str, str
         text_node.text = text
 
 
+def ensure_blank_paragraph_before(body: ET.Element, paragraph: ET.Element) -> None:
+    children = list(body)
+    try:
+        index = children.index(paragraph)
+    except ValueError:
+        return
+    if index > 0 and not normalized_text(element_text(children[index - 1])):
+        return
+    blank = ET.Element(q("p"))
+    set_paragraph_style(blank, "40")
+    set_paragraph_spacing(blank, before="0", after="0")
+    body.insert(index, blank)
+
+
 def clear_run_properties(paragraph: ET.Element) -> None:
     for run in paragraph.findall(".//w:r", NS):
         rpr = run.find("w:rPr", NS)
@@ -673,7 +689,8 @@ def apply_keyword_paragraph_format(paragraph: ET.Element, english: bool) -> None
     )
     set_paragraph_alignment(paragraph, "left")
     set_paragraph_indentation(paragraph, left="0", first_line="0", first_line_chars="0")
-    set_paragraph_spacing(paragraph, before="240", after="0")
+    clear_paragraph_spacing(paragraph)
+    set_paragraph_spacing(paragraph, before_lines="20", after="0")
 
 
 def normalize_keyword_text(text: str, english: bool) -> str:
@@ -827,6 +844,14 @@ def set_paragraph_spacing(
     ):
         if value is not None:
             spacing.set(q(attr), value)
+
+
+def clear_paragraph_spacing(paragraph: ET.Element) -> None:
+    spacing = ensure_ppr(paragraph).find("w:spacing", NS)
+    if spacing is None:
+        return
+    for attr in ("before", "beforeLines", "after", "afterLines", "line", "lineRule"):
+        spacing.attrib.pop(q(attr), None)
 
 
 def set_paragraph_indentation(
