@@ -366,6 +366,31 @@ class WordPostprocessTests(unittest.TestCase):
             self.assertIn("[10] 陈科", document_xml)
             self.assertNotIn("\t", document_xml)
 
+    def test_postprocess_copies_first_two_reference_pages(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            docx = root / "sample.docx"
+            reference = root / "reference.docx"
+            create_minimal_docx(
+                docx,
+                [
+                    ("封面与独创性声明", "36"),
+                    ("请复制粘贴学校 Word 模板中对应的封面、独创性声明部分。", "40"),
+                    ("摘 要", "36"),
+                    ("摘要正文", "40"),
+                ],
+            )
+            create_reference_frontmatter_docx(reference)
+
+            result = postprocess_docx(docx, WordPostprocessProfile(reference_docx=reference))
+            document_xml = read_docx_xml(docx, "word/document.xml")
+
+            self.assertIn("Copied first two pages from reference DOCX.", result.notes)
+            self.assertIn("模板封面第一页", document_xml)
+            self.assertIn("模板独创性声明第二页", document_xml)
+            self.assertIn("摘  要", document_xml)
+            self.assertNotIn("请复制粘贴学校 Word 模板", document_xml)
+
 
 def create_minimal_docx(path: Path, paragraphs: list[tuple[str, str | None]]) -> None:
     body = "".join(make_paragraph_xml(text, style) for text, style in paragraphs)
@@ -395,6 +420,24 @@ def create_minimal_docx(path: Path, paragraphs: list[tuple[str, str | None]]) ->
         docx.writestr("word/document.xml", document)
         docx.writestr("word/settings.xml", settings)
         docx.writestr("word/styles.xml", styles)
+
+
+def create_reference_frontmatter_docx(path: Path) -> None:
+    document = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        "<w:body>"
+        "<w:p><w:r><w:t>模板封面第一页</w:t></w:r></w:p>"
+        "<w:p><w:pPr><w:sectPr/></w:pPr></w:p>"
+        "<w:p><w:r><w:t>模板独创性声明第二页</w:t></w:r></w:p>"
+        "<w:p><w:pPr><w:sectPr/></w:pPr></w:p>"
+        "<w:p><w:r><w:t>模板摘要第三页</w:t></w:r></w:p>"
+        "<w:sectPr/>"
+        "</w:body></w:document>"
+    )
+    with ZipFile(path, "w", ZIP_DEFLATED) as docx:
+        docx.writestr("word/document.xml", document)
+        docx.writestr("word/_rels/document.xml.rels", '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>')
 
 
 def make_paragraph_xml(text: str, style: str | None = None) -> str:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import copy
 from pathlib import Path
 import re
 import shutil
@@ -12,10 +13,13 @@ from .citation import CitationAudit
 
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+PKG_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
-NS = {"w": W_NS}
+NS = {"w": W_NS, "r": R_NS, "rel": PKG_REL_NS}
 
 ET.register_namespace("w", W_NS)
+ET.register_namespace("r", R_NS)
 
 
 @dataclass(frozen=True)
@@ -36,7 +40,6 @@ def postprocess_docx(
     profile: WordPostprocessProfile,
     audit_result: CitationAudit | None = None,
 ) -> PostprocessResult:
-    del profile
     del audit_result
     warnings: list[str] = []
     notes: list[str] = []
@@ -47,8 +50,23 @@ def postprocess_docx(
             document_xml = source.read("word/document.xml")
             settings_xml = source.read("word/settings.xml") if "word/settings.xml" in source.namelist() else None
             styles_xml = source.read("word/styles.xml") if "word/styles.xml" in source.namelist() else None
+            rels_xml = (
+                source.read("word/_rels/document.xml.rels")
+                if "word/_rels/document.xml.rels" in source.namelist()
+                else None
+            )
 
             document_root = ET.fromstring(document_xml)
+            package_additions: dict[str, bytes] = {}
+            if profile.reference_docx is not None and profile.reference_docx.is_file():
+                frontmatter = load_reference_frontmatter(profile.reference_docx, rels_xml)
+                if frontmatter is not None:
+                    insert_reference_frontmatter(document_root, frontmatter.elements)
+                    rels_xml = frontmatter.rels_xml
+                    package_additions.update(frontmatter.package_additions)
+                    notes.append("Copied first two pages from reference DOCX.")
+                else:
+                    warnings.append("Could not detect the first two template pages in reference DOCX.")
             toc_inserted, bibliography_moved = process_document_xml(document_root)
             new_document_xml = xml_bytes(document_root)
 
@@ -63,10 +81,16 @@ def postprocess_docx(
                         target.writestr(item, new_settings_xml)
                     elif item.filename == "word/styles.xml" and new_styles_xml is not None:
                         target.writestr(item, new_styles_xml)
+                    elif item.filename == "word/_rels/document.xml.rels" and rels_xml is not None:
+                        target.writestr(item, rels_xml)
                     else:
                         target.writestr(item, source.read(item.filename))
                 if "word/settings.xml" not in source.namelist():
                     target.writestr("word/settings.xml", new_settings_xml)
+                if "word/_rels/document.xml.rels" not in source.namelist() and rels_xml is not None:
+                    target.writestr("word/_rels/document.xml.rels", rels_xml)
+                for name, data in package_additions.items():
+                    target.writestr(name, data)
 
         shutil.move(str(temp_docx), output_docx)
 
@@ -86,6 +110,223 @@ def postprocess_docx(
         toc_inserted=toc_inserted,
         bibliography_moved=bibliography_moved,
     )
+
+
+@dataclass(frozen=True)
+class FrontmatterCopy:
+    elements: tuple[ET.Element, ...]
+    rels_xml: bytes
+    package_additions: dict[str, bytes]
+
+
+def load_reference_frontmatter(reference_docx: Path, target_rels_xml: bytes | None) -> FrontmatterCopy | None:
+    with ZipFile(reference_docx, "r") as reference:
+        document_root = ET.fromstring(reference.read("word/document.xml"))
+        body = document_root.find("w:body", NS)
+        if body is None:
+            return None
+
+        elements = first_two_section_elements(body)
+        if not elements:
+            return None
+
+        target_rels_root = parse_relationships(target_rels_xml)
+        reference_rels_root = parse_relationships(
+            reference.read("word/_rels/document.xml.rels")
+            if "word/_rels/document.xml.rels" in reference.namelist()
+            else None
+        )
+        package_additions: dict[str, bytes] = {}
+        mapped_elements = [copy.deepcopy(element) for element in elements]
+        remove_header_footer_references(mapped_elements)
+        used_relationship_ids = collect_relationship_ids(mapped_elements)
+        remap_relationships(
+            mapped_elements,
+            used_relationship_ids,
+            reference_rels_root,
+            target_rels_root,
+            reference,
+            package_additions,
+        )
+        return FrontmatterCopy(
+            elements=tuple(mapped_elements),
+            rels_xml=xml_bytes(target_rels_root),
+            package_additions=package_additions,
+        )
+
+
+def first_two_section_elements(body: ET.Element) -> list[ET.Element]:
+    elements: list[ET.Element] = []
+    section_count = 0
+    for child in list(body):
+        elements.append(child)
+        if contains_section_properties(child):
+            section_count += 1
+            if section_count >= 2:
+                return elements
+    return []
+
+
+def contains_section_properties(element: ET.Element) -> bool:
+    return element.tag == q("sectPr") or element.find(".//w:sectPr", NS) is not None
+
+
+def insert_reference_frontmatter(root: ET.Element, elements: tuple[ET.Element, ...]) -> None:
+    body = root.find("w:body", NS)
+    if body is None:
+        return
+    remove_generated_frontmatter_placeholder(body)
+    insert_at = 0
+    for offset, element in enumerate(elements):
+        body.insert(insert_at + offset, element)
+
+
+def remove_generated_frontmatter_placeholder(body: ET.Element) -> None:
+    remove_named_bookmarks(body, "封面与独创性声明")
+    children = list(body)
+    start = None
+    for index, child in enumerate(children):
+        if normalized_text(element_text(child)) == "封面与独创性声明":
+            start = index
+            break
+    if start is None:
+        return
+    end = start + 1
+    while end < len(children):
+        text = normalized_text(element_text(children[end]))
+        if text in {"摘 要", "摘要", "ABSTRACT", "目 录", "目录"}:
+            break
+        end += 1
+    for child in children[start:end]:
+        body.remove(child)
+
+
+def remove_named_bookmarks(body: ET.Element, name: str) -> None:
+    bookmark_ids: set[str] = set()
+    for child in list(body):
+        if child.tag == q("bookmarkStart") and child.get(q("name")) == name and child.get(q("id")):
+            bookmark_ids.add(child.get(q("id")))
+            body.remove(child)
+            continue
+        for bookmark in child.findall(".//w:bookmarkStart", NS):
+            if bookmark.get(q("name")) == name and bookmark.get(q("id")):
+                bookmark_ids.add(bookmark.get(q("id")))
+                remove_descendant(child, bookmark)
+    for child in list(body):
+        if child.tag == q("bookmarkEnd") and child.get(q("id")) in bookmark_ids:
+            body.remove(child)
+            continue
+        for bookmark in child.findall(".//w:bookmarkEnd", NS):
+            if bookmark.get(q("id")) in bookmark_ids:
+                remove_descendant(child, bookmark)
+
+
+def remove_descendant(root: ET.Element, target: ET.Element) -> bool:
+    for parent in root.iter():
+        for child in list(parent):
+            if child is target:
+                parent.remove(child)
+                return True
+    return False
+
+
+def parse_relationships(rels_xml: bytes | None) -> ET.Element:
+    if rels_xml:
+        return ET.fromstring(rels_xml)
+    return ET.Element(f"{{{PKG_REL_NS}}}Relationships")
+
+
+def collect_relationship_ids(elements: list[ET.Element]) -> set[str]:
+    ids: set[str] = set()
+    for element in elements:
+        for node in element.iter():
+            for key, value in node.attrib.items():
+                if key in {rq("id"), rq("embed"), rq("link")}:
+                    ids.add(value)
+    return ids
+
+
+def remove_header_footer_references(elements: list[ET.Element]) -> None:
+    for element in elements:
+        for sect_pr in element.findall(".//w:sectPr", NS):
+            for child in list(sect_pr):
+                if child.tag in {q("headerReference"), q("footerReference")}:
+                    sect_pr.remove(child)
+
+
+def remap_relationships(
+    elements: list[ET.Element],
+    used_relationship_ids: set[str],
+    reference_rels_root: ET.Element,
+    target_rels_root: ET.Element,
+    reference_zip: ZipFile,
+    package_additions: dict[str, bytes],
+) -> None:
+    reference_relationships = {
+        relationship.get("Id"): relationship
+        for relationship in reference_rels_root.findall("rel:Relationship", NS)
+        if relationship.get("Id")
+    }
+    for old_id in sorted(used_relationship_ids):
+        relationship = reference_relationships.get(old_id)
+        if relationship is None:
+            continue
+        new_id = next_relationship_id(target_rels_root)
+        new_target = copy_relationship_target(relationship, new_id, reference_zip, package_additions)
+        ET.SubElement(
+            target_rels_root,
+            f"{{{PKG_REL_NS}}}Relationship",
+            {
+                "Id": new_id,
+                "Type": relationship.get("Type", ""),
+                "Target": new_target,
+                **({"TargetMode": relationship.get("TargetMode")} if relationship.get("TargetMode") else {}),
+            },
+        )
+        replace_relationship_id(elements, old_id, new_id)
+
+
+def copy_relationship_target(
+    relationship: ET.Element,
+    new_id: str,
+    reference_zip: ZipFile,
+    package_additions: dict[str, bytes],
+) -> str:
+    target = relationship.get("Target", "")
+    if relationship.get("TargetMode") == "External" or not target:
+        return target
+    source_name = f"word/{target}" if not target.startswith("/") else target.lstrip("/")
+    suffix = Path(target).suffix
+    if target.startswith("media/"):
+        new_target = f"media/{new_id}{suffix}"
+    else:
+        target_path = Path(target)
+        new_target = target_path.with_name(f"{target_path.stem}-{new_id}{suffix}").as_posix()
+    new_name = f"word/{new_target}"
+    if source_name in reference_zip.namelist():
+        package_additions[new_name] = reference_zip.read(source_name)
+        return new_target
+    return target
+
+
+def replace_relationship_id(elements: list[ET.Element], old_id: str, new_id: str) -> None:
+    for element in elements:
+        for node in element.iter():
+            for key, value in list(node.attrib.items()):
+                if key in {rq("id"), rq("embed"), rq("link")} and value == old_id:
+                    node.set(key, new_id)
+
+
+def next_relationship_id(root: ET.Element) -> str:
+    used = {
+        relationship.get("Id")
+        for relationship in root.findall("rel:Relationship", NS)
+        if relationship.get("Id")
+    }
+    index = 1
+    while f"rIdFront{index}" in used:
+        index += 1
+    return f"rIdFront{index}"
 
 
 def process_document_xml(root: ET.Element) -> tuple[bool, bool]:
@@ -584,6 +825,10 @@ def find_section_properties(body: ET.Element) -> ET.Element | None:
 
 def q(tag: str) -> str:
     return f"{{{W_NS}}}{tag}"
+
+
+def rq(tag: str) -> str:
+    return f"{{{R_NS}}}{tag}"
 
 
 def xml_bytes(root: ET.Element) -> bytes:
