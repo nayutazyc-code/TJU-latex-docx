@@ -651,7 +651,8 @@ def apply_heading_paragraph_format(paragraph: ET.Element, level: int) -> None:
         set_page_break_before(paragraph)
     elif level == 2:
         set_paragraph_alignment(paragraph, "left")
-        set_paragraph_spacing(paragraph, before="360", after="360")
+        clear_paragraph_spacing(paragraph)
+        set_paragraph_spacing(paragraph, before="360", after="360", line="240", line_rule="auto")
         set_paragraph_indentation(paragraph, left="0", first_line="0", first_line_chars="0")
     elif level == 3:
         set_paragraph_alignment(paragraph, "left")

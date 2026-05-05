@@ -328,6 +328,8 @@ class WordPostprocessTests(unittest.TestCase):
             self.assertIn('w:before="600"', document_xml)
             self.assertIn('w:before="360"', document_xml)
             self.assertIn('w:before="240"', document_xml)
+            self.assertEqual(paragraph_spacing(docx, "研究背景").get("line"), "240")
+            self.assertEqual(paragraph_spacing(docx, "研究背景").get("lineRule"), "auto")
             self.assertIn("<w:pageBreakBefore", document_xml)
             self.assertIn('w:left="0"', document_xml)
             self.assertIn('w:firstLine="0"', document_xml)
@@ -527,6 +529,21 @@ def paragraph_texts(path: Path) -> list[str]:
     with ZipFile(path) as docx:
         root = ET.fromstring(docx.read("word/document.xml"))
     return ["".join(node.text or "" for node in paragraph.findall(".//w:t", ns)) for paragraph in root.findall(".//w:p", ns)]
+
+
+def paragraph_spacing(path: Path, text: str) -> dict[str, str]:
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    w_ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    with ZipFile(path) as docx:
+        root = ET.fromstring(docx.read("word/document.xml"))
+    for paragraph in root.findall(".//w:p", ns):
+        paragraph_text = "".join(node.text or "" for node in paragraph.findall(".//w:t", ns))
+        if paragraph_text == text:
+            spacing = paragraph.find("w:pPr/w:spacing", ns)
+            if spacing is None:
+                return {}
+            return {key.rsplit("}", 1)[-1]: value for key, value in spacing.attrib.items() if key.startswith(f"{{{w_ns}}}")}
+    return {}
 
 
 def make_paragraph_xml(text: str, style: str | None = None) -> str:
