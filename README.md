@@ -51,7 +51,7 @@ latex-docx-converter
 
 Pandoc 可以处理大量常规 LaTeX 内容，但对复杂宏包、自定义命令、交叉引用、特殊排版环境和院校模板中的深度格式不保证完全还原。推荐先用 `reference.docx` 控制 Word 样式，再对生成的 Word 文件做少量人工校对。
 
-TJUThesis 兼容模式会把封面、摘要、目录、章标题和参考文献做预处理与 Word 后处理。目录是 Word TOC 字段，打开 Word 后可右键更新目录或按提示更新域。`\includepdf{独创性声明.pdf}` 这类 PDF 页面不能由 Pandoc 直接嵌入 DOCX，工具会在导出的 Word 中加入“独创性声明”提示页，最终声明页建议在 Word 中按学校模板插入或核对。
+TJUThesis 兼容模式会把封面、摘要、目录、章标题和参考文献做预处理与 Word 后处理。目录建议由word自动生成。
 
 如果日志中出现 `Missing bibliography entries`，说明正文引用了 `.bib` 中不存在的 citation key。补齐 `.bib` 后重新导出即可。
 
