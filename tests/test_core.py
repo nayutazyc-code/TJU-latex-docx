@@ -367,6 +367,41 @@ class WordPostprocessTests(unittest.TestCase):
             self.assertIn("[10] 陈科", document_xml)
             self.assertNotIn("\t", document_xml)
 
+    def test_postprocess_formats_chinese_and_english_abstracts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            docx = Path(tmp) / "abstract.docx"
+            create_minimal_docx(
+                docx,
+                [
+                    ("摘 要", "36"),
+                    ("中文摘要内容。", "40"),
+                    ("关键词：粉尘; 施工，控制", "40"),
+                    ("ABSTRACT", "36"),
+                    ("english abstract content.", "40"),
+                    ("KEY WORDS: dust， construction; control", "40"),
+                    ("目 录", "36"),
+                ],
+            )
+
+            postprocess_docx(docx, WordPostprocessProfile())
+            document_xml = read_docx_xml(docx, "word/document.xml")
+
+            self.assertIn('xml:space="preserve">摘  要', document_xml)
+            self.assertIn(">ABSTRACT<", document_xml)
+            self.assertIn("关键词：", document_xml)
+            self.assertIn("粉尘，施工，控制", document_xml)
+            self.assertIn("KEY WORDS:", document_xml)
+            self.assertIn("Dust; Construction; Control", document_xml)
+            self.assertIn('w:jc w:val="center"', document_xml)
+            self.assertIn('w:jc w:val="both"', document_xml)
+            self.assertIn('w:jc w:val="left"', document_xml)
+            self.assertIn('w:eastAsia="宋体"', document_xml)
+            self.assertIn('w:eastAsia="Times New Roman"', document_xml)
+            self.assertIn('w:sz w:val="44"', document_xml)
+            self.assertIn('w:sz w:val="28"', document_xml)
+            self.assertIn("<w:b", document_xml)
+            self.assertIn('w:firstLine="0"', document_xml)
+
     def test_postprocess_copies_first_two_reference_pages(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

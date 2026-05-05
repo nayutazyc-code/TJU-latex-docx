@@ -196,19 +196,43 @@ def build_declaration_note() -> str:
 
 
 def build_abstract_tex(fields: dict[str, str]) -> str:
+    keyword_cn = normalize_chinese_keywords(fields.get("keyword_cn", ""))
+    keyword_en = normalize_english_keywords(fields.get("keyword_en", ""))
     return "\n".join(
         [
             "\\section*{摘 要}",
             fields.get("abstract_cn", ""),
             "",
-            f"\\noindent \\textbf{{关键词：}} {fields.get('keyword_cn', '')}",
+            f"\\noindent \\textbf{{关键词：}} {keyword_cn}",
             "\\newpage",
             "\\section*{ABSTRACT}",
             fields.get("abstract_en", ""),
             "",
-            f"\\noindent \\textbf{{KEY WORDS:}} {fields.get('keyword_en', '')}",
+            f"\\noindent \\textbf{{KEY WORDS:}} {keyword_en}",
         ]
     )
+
+
+def normalize_chinese_keywords(value: str) -> str:
+    keywords = split_keyword_text(value)
+    return "，".join(keywords) if keywords else value.strip()
+
+
+def normalize_english_keywords(value: str) -> str:
+    keywords = split_keyword_text(value)
+    return "; ".join(capitalize_keyword(keyword) for keyword in keywords) if keywords else value.strip()
+
+
+def split_keyword_text(value: str) -> list[str]:
+    cleaned = re.sub(r"^(关键词|关键字|KEY\s*WORDS?)\s*[:：]\s*", "", value.strip(), flags=re.IGNORECASE)
+    return [part.strip() for part in re.split(r"[，,；;、]+", cleaned) if part.strip()]
+
+
+def capitalize_keyword(value: str) -> str:
+    for index, char in enumerate(value):
+        if char.isalpha():
+            return value[:index] + char.upper() + value[index + 1 :]
+    return value
 
 
 def extract_body_after_mainmatter(main_text: str) -> str:

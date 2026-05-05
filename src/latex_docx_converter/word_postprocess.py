@@ -398,6 +398,7 @@ def move_bibliography_entries(body: ET.Element) -> bool:
 
 def apply_tju_styles(body: ET.Element, skip_first: int = 0) -> None:
     children = list(body)
+    abstract_context: str | None = None
     for index, child in enumerate(children):
         if index < skip_first:
             continue
@@ -409,12 +410,31 @@ def apply_tju_styles(body: ET.Element, skip_first: int = 0) -> None:
         style = current_style(child)
         previous = children[index - 1] if index > 0 else None
         next_element = children[index + 1] if index + 1 < len(children) else None
-        if text in {
+        if text in {"摘 要", "摘要", "摘  要"}:
+            replace_paragraph_text(child, "摘  要")
+            set_paragraph_style(child, "36", outline_level=0, clear_numbering=True)
+            apply_abstract_title_format(child, english=False)
+            abstract_context = "cn"
+        elif text == "ABSTRACT":
+            replace_paragraph_text(child, "ABSTRACT")
+            set_paragraph_style(child, "36", outline_level=0, clear_numbering=True)
+            apply_abstract_title_format(child, english=True)
+            abstract_context = "en"
+        elif abstract_context == "cn" and is_chinese_keyword_paragraph(text):
+            set_paragraph_style(child, "40")
+            apply_keyword_paragraph_format(child, english=False)
+        elif abstract_context == "en" and is_english_keyword_paragraph(text):
+            set_paragraph_style(child, "40")
+            apply_keyword_paragraph_format(child, english=True)
+        elif abstract_context == "cn" and is_body_like_paragraph(text, child):
+            set_paragraph_style(child, "40")
+            apply_abstract_body_format(child, english=False)
+        elif abstract_context == "en" and is_body_like_paragraph(text, child):
+            set_paragraph_style(child, "40")
+            apply_abstract_body_format(child, english=True)
+        elif text in {
             "封面与独创性声明",
             "独创性声明",
-            "摘 要",
-            "摘要",
-            "ABSTRACT",
             "目 录",
             "目录",
             "参考文献",
@@ -423,10 +443,9 @@ def apply_tju_styles(body: ET.Element, skip_first: int = 0) -> None:
             "致 谢",
             "致谢",
         }:
+            abstract_context = None
             if text in {"目 录", "目录"}:
                 replace_paragraph_text(child, "目  录")
-            if text in {"摘 要", "摘要"}:
-                replace_paragraph_text(child, "摘  要")
             if text in {"附 录", "附录"}:
                 replace_paragraph_text(child, "附  录")
             if text in {"致 谢", "致谢"}:
@@ -436,24 +455,31 @@ def apply_tju_styles(body: ET.Element, skip_first: int = 0) -> None:
             set_paragraph_style(child, "8")
             apply_caption_paragraph_format(child)
         elif style == "2" or re.match(r"^第[一二三四五六七八九十百\d]+章\b", text):
+            abstract_context = None
             set_paragraph_style(child, "2", outline_level=0, clear_numbering=True)
             apply_heading_paragraph_format(child, 1)
         elif style == "3":
+            abstract_context = None
             set_paragraph_style(child, "3", outline_level=1, clear_numbering=True)
             apply_heading_paragraph_format(child, 2)
         elif style == "4":
+            abstract_context = None
             set_paragraph_style(child, "4", outline_level=2, clear_numbering=True)
             apply_heading_paragraph_format(child, 3)
         elif style == "38":
+            abstract_context = None
             set_paragraph_style(child, "3", outline_level=1, clear_numbering=True)
             apply_heading_paragraph_format(child, 2)
         elif style == "39":
+            abstract_context = None
             set_paragraph_style(child, "4", outline_level=2, clear_numbering=True)
             apply_heading_paragraph_format(child, 3)
         elif re.match(r"^第[一二三四五六七八九十百\d]+章\b", text):
+            abstract_context = None
             set_paragraph_style(child, "2", outline_level=0, clear_numbering=True)
             apply_heading_paragraph_format(child, 1)
         elif is_bibliography_entry(text):
+            abstract_context = None
             set_paragraph_style(child, "44")
             apply_reference_paragraph_format(child)
         elif is_body_like_paragraph(text, child):
@@ -560,6 +586,23 @@ def replace_paragraph_text(paragraph: ET.Element, text: str) -> None:
     text_node.text = text
 
 
+def replace_paragraph_runs(paragraph: ET.Element, runs: list[tuple[str, str, str, str, bool]]) -> None:
+    ppr = paragraph.find("w:pPr", NS)
+    for child in list(paragraph):
+        if child is not ppr:
+            paragraph.remove(child)
+    for text, east_asia_font, ascii_font, size, bold in runs:
+        if not text:
+            continue
+        run = ET.SubElement(paragraph, q("r"))
+        rpr = ET.SubElement(run, q("rPr"))
+        set_rpr_format(rpr, east_asia_font, ascii_font, size, bold=bold)
+        text_node = ET.SubElement(run, q("t"))
+        if text[0].isspace() or text[-1].isspace() or "  " in text:
+            text_node.set(XML_SPACE, "preserve")
+        text_node.text = text
+
+
 def set_paragraph_style(
     paragraph: ET.Element,
     style_id: str,
@@ -603,6 +646,55 @@ def apply_heading_paragraph_format(paragraph: ET.Element, level: int) -> None:
         set_paragraph_indentation(paragraph, left="0", first_line="0", first_line_chars="0")
 
 
+def apply_abstract_title_format(paragraph: ET.Element, english: bool) -> None:
+    set_paragraph_alignment(paragraph, "center")
+    set_paragraph_indentation(paragraph, left="0", first_line="0", first_line_chars="0")
+    set_paragraph_spacing(paragraph, before="360", after="360")
+    font = "Times New Roman" if english else "宋体"
+    set_run_format(paragraph, east_asia_font=font, ascii_font="Times New Roman", size="44", bold=True)
+
+
+def apply_abstract_body_format(paragraph: ET.Element, english: bool) -> None:
+    if english:
+        set_paragraph_alignment(paragraph, "both")
+        set_run_format(paragraph, east_asia_font="Times New Roman", ascii_font="Times New Roman", size="24")
+    else:
+        set_run_format(paragraph, east_asia_font="宋体", ascii_font="Times New Roman", size="24")
+
+
+def apply_keyword_paragraph_format(paragraph: ET.Element, english: bool) -> None:
+    text = element_text(paragraph)
+    label = "KEY WORDS: " if english else "关键词："
+    keywords = normalize_keyword_text(text, english)
+    replace_paragraph_runs(
+        paragraph,
+        [
+            (label, "Times New Roman" if english else "宋体", "Times New Roman", "28", True),
+            (keywords, "Times New Roman" if english else "宋体", "Times New Roman", "24", False),
+        ],
+    )
+    set_paragraph_alignment(paragraph, "left")
+    set_paragraph_indentation(paragraph, left="0", first_line="0", first_line_chars="0")
+    set_paragraph_spacing(paragraph, before="240", after="0")
+
+
+def normalize_keyword_text(text: str, english: bool) -> str:
+    if english:
+        cleaned = re.sub(r"^\s*KEY\s*WORDS?\s*[:：]\s*", "", text, flags=re.IGNORECASE).strip()
+        parts = [part.strip() for part in re.split(r"[，,；;、]+", cleaned) if part.strip()]
+        return "; ".join(capitalize_keyword(part) for part in parts)
+    cleaned = re.sub(r"^\s*(关键词|关键字)\s*[:：]\s*", "", text).strip()
+    parts = [part.strip() for part in re.split(r"[，,；;、]+", cleaned) if part.strip()]
+    return "，".join(parts)
+
+
+def capitalize_keyword(value: str) -> str:
+    for index, char in enumerate(value):
+        if char.isalpha():
+            return value[:index] + char.upper() + value[index + 1 :]
+    return value
+
+
 def apply_caption_paragraph_format(paragraph: ET.Element) -> None:
     normalize_caption_text(paragraph)
     set_paragraph_alignment(paragraph, "center")
@@ -644,9 +736,15 @@ def normalize_bibliography_text(element: ET.Element) -> None:
     text_node.text = text
 
 
-def set_run_format(element: ET.Element, east_asia_font: str, ascii_font: str, size: str) -> None:
+def set_run_format(
+    element: ET.Element,
+    east_asia_font: str,
+    ascii_font: str,
+    size: str,
+    bold: bool = False,
+) -> None:
     if element.tag == q("style"):
-        set_rpr_format(ensure_rpr(element), east_asia_font, ascii_font, size)
+        set_rpr_format(ensure_rpr(element), east_asia_font, ascii_font, size, bold=bold)
         return
 
     runs = element.findall("w:r", NS)
@@ -657,7 +755,7 @@ def set_run_format(element: ET.Element, east_asia_font: str, ascii_font: str, si
         if rpr is None:
             rpr = ET.Element(q("rPr"))
             run.insert(0, rpr)
-        set_rpr_format(rpr, east_asia_font, ascii_font, size)
+        set_rpr_format(rpr, east_asia_font, ascii_font, size, bold=bold)
 
 
 def ensure_rpr(element: ET.Element) -> ET.Element:
@@ -668,7 +766,13 @@ def ensure_rpr(element: ET.Element) -> ET.Element:
     return rpr
 
 
-def set_rpr_format(rpr: ET.Element, east_asia_font: str, ascii_font: str, size: str) -> None:
+def set_rpr_format(
+    rpr: ET.Element,
+    east_asia_font: str,
+    ascii_font: str,
+    size: str,
+    bold: bool = False,
+) -> None:
     fonts = rpr.find("w:rFonts", NS)
     if fonts is None:
         fonts = ET.Element(q("rFonts"))
@@ -687,6 +791,11 @@ def set_rpr_format(rpr: ET.Element, east_asia_font: str, ascii_font: str, size: 
         sz_cs = ET.Element(q("szCs"))
         rpr.append(sz_cs)
     sz_cs.set(q("val"), size)
+    if bold:
+        if rpr.find("w:b", NS) is None:
+            rpr.append(ET.Element(q("b")))
+        if rpr.find("w:bCs", NS) is None:
+            rpr.append(ET.Element(q("bCs")))
 
 
 def set_paragraph_alignment(paragraph: ET.Element, value: str) -> None:
@@ -802,6 +911,14 @@ def contains_visual(element: ET.Element) -> bool:
 
 def is_bibliography_entry(text: str) -> bool:
     return bool(re.match(r"^\[\d+\]\s+", strip_text(text)))
+
+
+def is_chinese_keyword_paragraph(text: str) -> bool:
+    return bool(re.match(r"^(关键词|关键字)\s*[:：]", strip_text(text)))
+
+
+def is_english_keyword_paragraph(text: str) -> bool:
+    return bool(re.match(r"^KEY\s*WORDS?\s*[:：]", strip_text(text), re.IGNORECASE))
 
 
 def is_paragraph(element: ET.Element) -> bool:
