@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 import os
 from pathlib import Path
 import subprocess
+import tempfile
 from typing import Iterable
 
 from .citation import audit_citations, collect_project_tex_text
@@ -55,32 +56,34 @@ def convert_project(config: ConversionConfig) -> ConversionResult:
     postprocess_warnings: tuple[str, ...] = ()
     postprocess_notes: tuple[str, ...] = ()
     with prepare_tjuthesis_input(normalized.project_dir, normalized.main_tex) as prepared:
-        command = build_pandoc_command(
-            normalized,
-            pandoc,
-            input_tex=prepared.main_tex,
-            add_toc=prepared.add_toc,
-        )
-        try:
-            process = subprocess.run(
-                command,
-                cwd=normalized.project_dir,
-                text=True,
-                capture_output=True,
-                check=False,
+        with tempfile.TemporaryDirectory(prefix="latex-docx-csl-") as csl_tmp:
+            pandoc_config, csl_notes = prepare_csl_for_pandoc(normalized, Path(csl_tmp))
+            command = build_pandoc_command(
+                pandoc_config,
+                pandoc,
+                input_tex=prepared.main_tex,
+                add_toc=prepared.add_toc,
             )
-        except OSError as exc:
-            write_log(
-                log_path,
-                command,
-                started_at,
-                stdout="",
-                stderr=str(exc),
-                returncode=None,
-                notes=prepared.notes,
-                warnings=prepared.warnings,
-            )
-            raise ConversionError(f"Pandoc failed to start: {exc}", log_path) from exc
+            try:
+                process = subprocess.run(
+                    command,
+                    cwd=normalized.project_dir,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+            except OSError as exc:
+                write_log(
+                    log_path,
+                    command,
+                    started_at,
+                    stdout="",
+                    stderr=str(exc),
+                    returncode=None,
+                    notes=(*prepared.notes, *csl_notes),
+                    warnings=prepared.warnings,
+                )
+                raise ConversionError(f"Pandoc failed to start: {exc}", log_path) from exc
 
         if process.returncode == 0 and normalized.output_docx.exists() and prepared.postprocess_docx:
             postprocess = postprocess_docx(
@@ -100,6 +103,7 @@ def convert_project(config: ConversionConfig) -> ConversionResult:
             returncode=process.returncode,
             notes=(
                 *prepared.notes,
+                *csl_notes,
                 *postprocess_notes,
             ),
             warnings=(
@@ -128,6 +132,30 @@ def convert_project(config: ConversionConfig) -> ConversionResult:
             *postprocess_warnings,
         ),
     )
+
+
+def prepare_csl_for_pandoc(config: ConversionConfig, temp_dir: Path) -> tuple[ConversionConfig, tuple[str, ...]]:
+    if config.csl is None or not is_gbt_7714_csl(config.csl):
+        return config, ()
+    text = config.csl.read_text(encoding="utf-8")
+    patched = text.replace('<name-part name="family" text-case="uppercase"/>', '<name-part name="family"/>')
+    if patched == text:
+        return config, ()
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    patched_path = temp_dir / f"{config.csl.stem}-tju-docx.csl"
+    patched_path.write_text(patched, encoding="utf-8")
+    return replace(config, csl=patched_path), ("Patched GB/T 7714 CSL to preserve English author name case.",)
+
+
+def is_gbt_7714_csl(path: Path) -> bool:
+    name = path.name.lower()
+    if "7714" in name:
+        return True
+    try:
+        head = path.read_text(encoding="utf-8", errors="ignore")[:1000].lower()
+    except OSError:
+        return False
+    return "gb/t 7714" in head or "china national standard" in head
 
 
 def normalize_config(config: ConversionConfig) -> ConversionConfig:

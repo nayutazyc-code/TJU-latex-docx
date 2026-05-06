@@ -349,15 +349,18 @@ def process_document_xml(root: ET.Element, protected_frontmatter_count: int = 0)
 
 def process_styles_xml(styles_xml: bytes) -> bytes:
     root = ET.fromstring(styles_xml)
-    for style_id in ("2", "3", "4", "37", "38", "39"):
+    for style_id in ("2", "3", "4", "36", "37", "38", "39"):
         style = root.find(f"w:style[@w:styleId='{style_id}']", NS)
         if style is None:
             continue
         ppr = style.find("w:pPr", NS)
         if ppr is not None:
             remove_child(ppr, "numPr")
-        if style_id == "37":
+        if style_id in {"36", "37"}:
             set_rpr_size(ensure_rpr(style), "30")
+        if style_id == "36":
+            remove_child(style, "basedOn")
+            apply_backmatter_heading_style_format(style)
     reference_style = root.find("w:style[@w:styleId='44']", NS)
     if reference_style is not None:
         apply_reference_paragraph_format(reference_style)
@@ -444,6 +447,8 @@ def apply_tju_styles(body: ET.Element, skip_first: int = 0) -> None:
             if text in {"致 谢", "致谢"}:
                 replace_paragraph_text(child, "致  谢")
             set_paragraph_style(child, "36", outline_level=0, clear_numbering=True)
+            if text in {"参考文献", "附 录", "附录", "致 谢", "致谢"}:
+                apply_backmatter_heading_format(child)
         elif is_heading_level_1(text, style):
             abstract_context = None
             set_paragraph_style(child, "37", outline_level=0, clear_numbering=True)
@@ -755,6 +760,22 @@ def apply_heading_paragraph_format(paragraph: ET.Element, level: int) -> None:
         set_paragraph_indentation(paragraph, left="0", first_line="0", first_line_chars="0")
 
 
+def apply_backmatter_heading_format(paragraph: ET.Element) -> None:
+    remove_child(ensure_ppr(paragraph), "numPr")
+    clear_run_properties(paragraph)
+    set_paragraph_alignment(paragraph, "center")
+    clear_paragraph_spacing(paragraph)
+    set_paragraph_spacing(paragraph, before="600", after="600", line="240", line_rule="auto")
+    set_paragraph_indentation(paragraph, left="0", first_line="0", first_line_chars="0")
+    set_page_break_before(paragraph)
+
+
+def apply_backmatter_heading_style_format(style: ET.Element) -> None:
+    clear_paragraph_spacing(style)
+    set_paragraph_spacing(style, before="600", after="600", line="240", line_rule="auto")
+    set_paragraph_indentation(style, left="0", first_line="0", first_line_chars="0")
+
+
 def normalize_heading_text_and_number(paragraph: ET.Element, level: int) -> None:
     text = normalized_text(element_text(paragraph))
     if level == 1:
@@ -871,6 +892,8 @@ def normalize_bibliography_text(element: ET.Element) -> None:
         return
     text = re.sub(r"\s*\t\s*", " ", text)
     text = re.sub(r"^(\[\d+\])\s+", r"\1 ", text)
+    if is_english_bibliography_entry_text(text):
+        text = normalize_english_bibliography_terms(text)
     ppr = element.find("w:pPr", NS)
     for child in list(element):
         if child is not ppr:
@@ -878,6 +901,24 @@ def normalize_bibliography_text(element: ET.Element) -> None:
     run = ET.SubElement(element, q("r"))
     text_node = ET.SubElement(run, q("t"))
     text_node.text = text
+
+
+def is_english_bibliography_entry_text(text: str) -> bool:
+    match = re.match(r"^\[\d+\]\s*(.+?)\.\s+", text)
+    if not match:
+        return False
+    author_part = match.group(1)
+    author_part_without_etal = author_part.replace("等", "")
+    return bool(re.search(r"[A-Za-z]", author_part_without_etal)) and not re.search(
+        r"[\u4e00-\u9fff]",
+        author_part_without_etal,
+    )
+
+
+def normalize_english_bibliography_terms(text: str) -> str:
+    text = re.sub(r"([,，]\s*)等(?=[.。])", r"\1et al", text)
+    text = re.sub(r"(?<![\u4e00-\u9fffA-Za-z])等(?=[.。])", "et al", text)
+    return text
 
 
 def set_run_format(

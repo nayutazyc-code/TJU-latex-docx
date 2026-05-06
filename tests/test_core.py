@@ -11,6 +11,7 @@ from latex_docx_converter.converter import (
     build_pandoc_command,
     make_log_path,
     normalize_config,
+    prepare_csl_for_pandoc,
     resolve_export_docx,
 )
 from latex_docx_converter.defaults import find_default_bibliography, find_default_csl, find_default_reference_docx
@@ -74,6 +75,29 @@ class ConverterCommandTests(unittest.TestCase):
             self.assertIn(f"--reference-doc={reference.resolve()}", command)
             self.assertIn(f"--bibliography={bibliography.resolve()}", command)
             self.assertIn(f"--csl={csl.resolve()}", command)
+
+    def test_prepare_csl_removes_forced_uppercase_from_gbt_style(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            csl = root / "china-national-standard-gb-t-7714-2015-numeric.csl"
+            csl.write_text(
+                '<style><info><title>China National Standard GB/T 7714</title></info>'
+                '<name-part name="family" text-case="uppercase"/>'
+                "</style>",
+                encoding="utf-8",
+            )
+            config = ConversionConfig(
+                project_dir=root,
+                main_tex=root / "main.tex",
+                output_docx=root / "out.docx",
+                csl=csl,
+            )
+
+            patched, notes = prepare_csl_for_pandoc(config, root / "tmp")
+
+            self.assertNotEqual(patched.csl, csl)
+            self.assertIn("preserve English author name case", notes[0])
+            self.assertNotIn("text-case=\"uppercase\"", patched.csl.read_text(encoding="utf-8"))
 
     def test_normalizes_output_and_log_under_export_directories(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -313,6 +337,8 @@ class WordPostprocessTests(unittest.TestCase):
                     ("参考文献", "3"),
                     ("附 录", "2"),
                     ("附录正文", None),
+                    ("致谢", "2"),
+                    ("致谢正文", None),
                     ("[1] ZHANG San. Title[J]. Journal, 2024.", None),
                 ],
             )
@@ -327,6 +353,34 @@ class WordPostprocessTests(unittest.TestCase):
             self.assertIn('w:val="true"', settings_xml)
             self.assertLess(document_xml.find("参考文献"), document_xml.find("[1] ZHANG"))
             self.assertLess(document_xml.find("[1] ZHANG"), document_xml.find("附  录"))
+            self.assertLess(document_xml.find("附  录"), document_xml.find("致  谢"))
+            self.assertEqual(paragraph_style(docx, "参考文献"), "36")
+            self.assertEqual(paragraph_style(docx, "附  录"), "36")
+            self.assertEqual(paragraph_style(docx, "致  谢"), "36")
+            self.assertTrue(paragraph_has_page_break(docx, "参考文献"))
+            self.assertTrue(paragraph_has_page_break(docx, "附  录"))
+            self.assertTrue(paragraph_has_page_break(docx, "致  谢"))
+            self.assertEqual(paragraph_alignment(docx, "参考文献"), "center")
+            self.assertEqual(paragraph_alignment(docx, "附  录"), "center")
+            self.assertEqual(paragraph_alignment(docx, "致  谢"), "center")
+            self.assertEqual(paragraph_spacing(docx, "参考文献").get("before"), "600")
+            self.assertEqual(paragraph_spacing(docx, "参考文献").get("after"), "600")
+            self.assertEqual(paragraph_spacing(docx, "参考文献").get("line"), "240")
+            self.assertEqual(paragraph_spacing(docx, "参考文献").get("lineRule"), "auto")
+            self.assertEqual(paragraph_spacing(docx, "附  录").get("before"), "600")
+            self.assertEqual(paragraph_spacing(docx, "附  录").get("after"), "600")
+            self.assertEqual(paragraph_spacing(docx, "附  录").get("line"), "240")
+            self.assertEqual(paragraph_spacing(docx, "附  录").get("lineRule"), "auto")
+            self.assertEqual(paragraph_indentation(docx, "参考文献").get("firstLine"), "0")
+            self.assertEqual(paragraph_indentation(docx, "附  录").get("firstLine"), "0")
+            self.assertEqual(paragraph_indentation(docx, "致  谢").get("firstLine"), "0")
+            self.assertEqual(style_run_size(docx, "36"), "30")
+            self.assertEqual(style_paragraph_spacing(docx, "36").get("before"), "600")
+            self.assertEqual(style_paragraph_spacing(docx, "36").get("after"), "600")
+            self.assertEqual(style_paragraph_spacing(docx, "36").get("line"), "240")
+            self.assertEqual(style_paragraph_spacing(docx, "36").get("lineRule"), "auto")
+            self.assertEqual(style_paragraph_indentation(docx, "36").get("firstLine"), "0")
+            self.assertIsNone(style_based_on(docx, "36"))
 
     def test_postprocess_maps_headings_to_tju_template_styles(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -408,6 +462,24 @@ class WordPostprocessTests(unittest.TestCase):
 
             self.assertIn("[10] 陈科", document_xml)
             self.assertNotIn("\t", document_xml)
+
+    def test_postprocess_uses_et_al_for_english_bibliography_entries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            docx = Path(tmp) / "refs-et-al.docx"
+            create_minimal_docx(
+                docx,
+                [
+                    ("参考文献", "36"),
+                    ("[1] Yan H, Ding G, Li H, 等. Dust study[J]. Sustainability, 2019.", None),
+                    ("[2] 陈科, 周军, 聂春晓, 等. 工地扬尘管控措施效果量化研究[J].", None),
+                ],
+            )
+
+            postprocess_docx(docx, WordPostprocessProfile())
+            document_xml = read_docx_xml(docx, "word/document.xml")
+
+            self.assertIn("Yan H, Ding G, Li H, et al. Dust study", document_xml)
+            self.assertIn("陈科, 周军, 聂春晓, 等.", document_xml)
 
     def test_postprocess_formats_chinese_and_english_abstracts(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -535,6 +607,7 @@ def create_minimal_docx(path: Path, paragraphs: list[tuple[str, str | None]]) ->
         '<w:style w:type="paragraph" w:styleId="2"><w:name w:val="heading 1"/><w:pPr><w:numPr/></w:pPr></w:style>'
         '<w:style w:type="paragraph" w:styleId="3"><w:name w:val="heading 2"/><w:pPr><w:numPr/></w:pPr></w:style>'
         '<w:style w:type="paragraph" w:styleId="4"><w:name w:val="heading 3"/><w:pPr><w:numPr/></w:pPr></w:style>'
+        '<w:style w:type="paragraph" w:styleId="36"><w:name w:val="标题一（无序号）"/><w:pPr><w:numPr/></w:pPr></w:style>'
         '<w:style w:type="paragraph" w:styleId="37"><w:name w:val="大标题"/><w:pPr><w:numPr/></w:pPr></w:style>'
         '<w:style w:type="paragraph" w:styleId="38"><w:name w:val="二级标题"/><w:pPr><w:numPr/></w:pPr></w:style>'
         '<w:style w:type="paragraph" w:styleId="39"><w:name w:val="三级标题"/><w:pPr><w:numPr/></w:pPr></w:style>'
@@ -610,6 +683,30 @@ def paragraph_style(path: Path, text: str) -> str | None:
     return None
 
 
+def paragraph_has_page_break(path: Path, text: str) -> bool:
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    with ZipFile(path) as docx:
+        root = ET.fromstring(docx.read("word/document.xml"))
+    for paragraph in root.findall(".//w:p", ns):
+        paragraph_text = "".join(node.text or "" for node in paragraph.findall(".//w:t", ns))
+        if paragraph_text == text:
+            return paragraph.find("w:pPr/w:pageBreakBefore", ns) is not None
+    return False
+
+
+def paragraph_alignment(path: Path, text: str) -> str | None:
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    w_ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    with ZipFile(path) as docx:
+        root = ET.fromstring(docx.read("word/document.xml"))
+    for paragraph in root.findall(".//w:p", ns):
+        paragraph_text = "".join(node.text or "" for node in paragraph.findall(".//w:t", ns))
+        if paragraph_text == text:
+            alignment = paragraph.find("w:pPr/w:jc", ns)
+            return alignment.get(f"{{{w_ns}}}val") if alignment is not None else None
+    return None
+
+
 def paragraph_texts(path: Path) -> list[str]:
     ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
     with ZipFile(path) as docx:
@@ -629,6 +726,25 @@ def paragraph_spacing(path: Path, text: str) -> dict[str, str]:
             if spacing is None:
                 return {}
             return {key.rsplit("}", 1)[-1]: value for key, value in spacing.attrib.items() if key.startswith(f"{{{w_ns}}}")}
+    return {}
+
+
+def paragraph_indentation(path: Path, text: str) -> dict[str, str]:
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    w_ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    with ZipFile(path) as docx:
+        root = ET.fromstring(docx.read("word/document.xml"))
+    for paragraph in root.findall(".//w:p", ns):
+        paragraph_text = "".join(node.text or "" for node in paragraph.findall(".//w:t", ns))
+        if paragraph_text == text:
+            indentation = paragraph.find("w:pPr/w:ind", ns)
+            if indentation is None:
+                return {}
+            return {
+                key.rsplit("}", 1)[-1]: value
+                for key, value in indentation.attrib.items()
+                if key.startswith(f"{{{w_ns}}}")
+            }
     return {}
 
 
@@ -657,6 +773,44 @@ def style_run_size(path: Path, style_id: str) -> str | None:
         return None
     size = style.find("w:rPr/w:sz", ns)
     return size.get(f"{{{w_ns}}}val") if size is not None else None
+
+
+def style_based_on(path: Path, style_id: str) -> str | None:
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    w_ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    with ZipFile(path) as docx:
+        root = ET.fromstring(docx.read("word/styles.xml"))
+    style = root.find(f"w:style[@w:styleId='{style_id}']", ns)
+    if style is None:
+        return None
+    based_on = style.find("w:basedOn", ns)
+    return based_on.get(f"{{{w_ns}}}val") if based_on is not None else None
+
+
+def style_paragraph_spacing(path: Path, style_id: str) -> dict[str, str]:
+    return style_paragraph_properties(path, style_id, "spacing")
+
+
+def style_paragraph_indentation(path: Path, style_id: str) -> dict[str, str]:
+    return style_paragraph_properties(path, style_id, "ind")
+
+
+def style_paragraph_properties(path: Path, style_id: str, tag: str) -> dict[str, str]:
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    w_ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    with ZipFile(path) as docx:
+        root = ET.fromstring(docx.read("word/styles.xml"))
+    style = root.find(f"w:style[@w:styleId='{style_id}']", ns)
+    if style is None:
+        return {}
+    element = style.find(f"w:pPr/w:{tag}", ns)
+    if element is None:
+        return {}
+    return {
+        key.rsplit("}", 1)[-1]: value
+        for key, value in element.attrib.items()
+        if key.startswith(f"{{{w_ns}}}")
+    }
 
 
 def make_paragraph_xml(text: str, style: str | None = None) -> str:
