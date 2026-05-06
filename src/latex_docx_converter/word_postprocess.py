@@ -13,12 +13,14 @@ from .citation import CitationAudit
 
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+M_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
 R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 PKG_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
 XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
-NS = {"w": W_NS, "r": R_NS, "rel": PKG_REL_NS}
+NS = {"w": W_NS, "m": M_NS, "r": R_NS, "rel": PKG_REL_NS}
 
 ET.register_namespace("w", W_NS)
+ET.register_namespace("m", M_NS)
 ET.register_namespace("r", R_NS)
 
 
@@ -339,6 +341,7 @@ def process_document_xml(root: ET.Element, protected_frontmatter_count: int = 0)
     remove_table_of_contents_heading(body)
     bibliography_moved = move_bibliography_entries(body)
     apply_tju_styles(body, protected_frontmatter_count)
+    right_align_equation_numbers(body)
     toc_inserted = insert_toc_field(body)
     remove_marker_paragraphs(body)
     return toc_inserted, bibliography_moved
@@ -520,6 +523,97 @@ def remove_marker_paragraphs(body: ET.Element) -> None:
         text = normalized_text(element_text(child))
         if text in {"TJU_DOCX_TOC_PLACEHOLDER", "TJU_DOCX_BIB_PLACEHOLDER"}:
             body.remove(child)
+
+
+def right_align_equation_numbers(body: ET.Element) -> None:
+    for child in list(body):
+        if not is_paragraph(child):
+            continue
+        result = extract_trailing_equation_number(child)
+        if result is None:
+            continue
+        math_para, number = result
+        table = make_equation_table(math_para, number)
+        body.insert(list(body).index(child), table)
+        body.remove(child)
+
+
+def extract_trailing_equation_number(paragraph: ET.Element) -> tuple[ET.Element, str] | None:
+    math_para = paragraph.find("m:oMathPara", NS)
+    if math_para is None:
+        return None
+    math = math_para.find("m:oMath", NS)
+    if math is None:
+        return None
+
+    children = list(math)
+    for start in range(len(children) - 1, -1, -1):
+        suffix = children[start:]
+        if not suffix or any(child.tag != mq("r") for child in suffix):
+            continue
+        suffix_text = "".join(element_math_text(child) for child in suffix)
+        match = re.fullmatch(r"[\s\u2000-\u200a]*(?:\()(\d+)[−-](\d+)(?:\))", suffix_text)
+        if not match:
+            continue
+        while start > 0 and children[start - 1].tag == mq("r") and re.fullmatch(
+            r"[\s\u2000-\u200a]*",
+            element_math_text(children[start - 1]),
+        ):
+            start -= 1
+            suffix.insert(0, children[start])
+        for child in suffix:
+            math.remove(child)
+        number = f"({match.group(1)}-{match.group(2)})"
+        return copy.deepcopy(math_para), number
+    return None
+
+
+def make_equation_table(math_para: ET.Element, number: str) -> ET.Element:
+    table = ET.Element(q("tbl"))
+    table.append(make_equation_table_properties())
+    grid = ET.SubElement(table, q("tblGrid"))
+    grid_col = ET.SubElement(grid, q("gridCol"))
+    grid_col.set(q("w"), "8500")
+    grid_col = ET.SubElement(grid, q("gridCol"))
+    grid_col.set(q("w"), "1200")
+
+    row = ET.SubElement(table, q("tr"))
+    equation_cell = make_table_cell("8500")
+    number_cell = make_table_cell("1200")
+    row.append(equation_cell)
+    row.append(number_cell)
+
+    equation_paragraph = ET.SubElement(equation_cell, q("p"))
+    set_paragraph_alignment(equation_paragraph, "center")
+    equation_paragraph.append(math_para)
+
+    number_paragraph = ET.SubElement(number_cell, q("p"))
+    set_paragraph_alignment(number_paragraph, "right")
+    run = ET.SubElement(number_paragraph, q("r"))
+    text_node = ET.SubElement(run, q("t"))
+    text_node.text = number
+    return table
+
+
+def make_equation_table_properties() -> ET.Element:
+    tbl_pr = ET.Element(q("tblPr"))
+    tbl_w = ET.SubElement(tbl_pr, q("tblW"))
+    tbl_w.set(q("w"), "5000")
+    tbl_w.set(q("type"), "pct")
+    borders = ET.SubElement(tbl_pr, q("tblBorders"))
+    for border_name in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        border = ET.SubElement(borders, q(border_name))
+        border.set(q("val"), "nil")
+    return tbl_pr
+
+
+def make_table_cell(width: str) -> ET.Element:
+    cell = ET.Element(q("tc"))
+    cell_pr = ET.SubElement(cell, q("tcPr"))
+    cell_w = ET.SubElement(cell_pr, q("tcW"))
+    cell_w.set(q("w"), width)
+    cell_w.set(q("type"), "dxa")
+    return cell
 
 
 def ensure_update_fields(settings_xml: bytes | None) -> bytes:
@@ -997,6 +1091,10 @@ def element_text(element: ET.Element) -> str:
     return "".join(text.text or "" for text in element.findall(".//w:t", NS))
 
 
+def element_math_text(element: ET.Element) -> str:
+    return "".join(text.text or "" for text in element.findall(".//m:t", NS))
+
+
 def normalized_text(text: str) -> str:
     return re.sub(r"\s+", " ", strip_text(text)).strip()
 
@@ -1014,6 +1112,10 @@ def find_section_properties(body: ET.Element) -> ET.Element | None:
 
 def q(tag: str) -> str:
     return f"{{{W_NS}}}{tag}"
+
+
+def mq(tag: str) -> str:
+    return f"{{{M_NS}}}{tag}"
 
 
 def rq(tag: str) -> str:

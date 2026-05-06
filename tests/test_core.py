@@ -472,6 +472,22 @@ class WordPostprocessTests(unittest.TestCase):
             self.assertEqual(paragraph_style(docx, "1.1  研究背景"), "38")
             self.assertEqual(paragraph_style(docx, "1.1.1  研究意义"), "39")
 
+    def test_postprocess_moves_equation_number_to_right_cell(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            docx = Path(tmp) / "equation.docx"
+            create_equation_number_docx(docx)
+
+            postprocess_docx(docx, WordPostprocessProfile())
+            document_xml = read_docx_xml(docx, "word/document.xml")
+
+            self.assertIn("<w:tbl>", document_xml)
+            self.assertIn("<w:t>(3-1)</w:t>", document_xml)
+            self.assertIn('<w:jc w:val="right"', document_xml)
+            self.assertIn('<w:jc w:val="center"', document_xml)
+            self.assertNotIn("<m:t>(</m:t>", document_xml)
+            self.assertNotIn("<m:t>  </m:t>", document_xml)
+            self.assertNotIn("<m:t>3</m:t><m:r><m:rPr><m:sty m:val=\"p\" /></m:rPr><m:t>−</m:t>", document_xml)
+
     def test_postprocess_copies_first_two_reference_pages(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -546,6 +562,38 @@ def create_reference_frontmatter_docx(path: Path) -> None:
     with ZipFile(path, "w", ZIP_DEFLATED) as docx:
         docx.writestr("word/document.xml", document)
         docx.writestr("word/_rels/document.xml.rels", '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>')
+
+
+def create_equation_number_docx(path: Path) -> None:
+    document = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+        'xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math">'
+        "<w:body>"
+        "<w:p><w:pPr><w:pStyle w:val=\"BodyText\"/></w:pPr>"
+        "<m:oMathPara><m:oMathParaPr><m:jc m:val=\"center\"/></m:oMathParaPr><m:oMath>"
+        "<m:r><m:t>a=b</m:t></m:r>"
+        "<m:r><m:t>  </m:t></m:r>"
+        "<m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>(</m:t></m:r>"
+        "<m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>3</m:t></m:r>"
+        "<m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>−</m:t></m:r>"
+        "<m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>1</m:t></m:r>"
+        "<m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>)</m:t></m:r>"
+        "</m:oMath></m:oMathPara></w:p>"
+        "<w:sectPr/></w:body></w:document>"
+    )
+    settings = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>'
+    )
+    styles = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>'
+    )
+    with ZipFile(path, "w", ZIP_DEFLATED) as docx:
+        docx.writestr("word/document.xml", document)
+        docx.writestr("word/settings.xml", settings)
+        docx.writestr("word/styles.xml", styles)
 
 
 def paragraph_style(path: Path, text: str) -> str | None:
