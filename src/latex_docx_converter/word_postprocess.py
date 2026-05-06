@@ -746,7 +746,7 @@ def apply_heading_paragraph_format(paragraph: ET.Element, level: int) -> None:
     normalize_heading_text_and_number(paragraph, level)
     if level == 1:
         set_paragraph_alignment(paragraph, "center")
-        set_paragraph_spacing(paragraph, before="600", after="600")
+        set_paragraph_spacing(paragraph, before="600", after="600", line="240", line_rule="auto")
         set_paragraph_indentation(paragraph, left="0", first_line="0")
         set_page_break_before(paragraph)
     elif level == 2:

@@ -8,8 +8,10 @@ import subprocess
 import tempfile
 from typing import Iterable
 
+from .ai_review_bundle import AiReviewBundle, build_ai_review_bundle
 from .citation import audit_citations, collect_project_tex_text
 from .defaults import find_default_bibliography, find_default_csl, find_default_reference_docx
+from .docx_review import ReviewReport, review_docx
 from .pandoc_manager import ensure_pandoc
 from .tjuthesis import prepare_tjuthesis_input
 from .word_postprocess import WordPostprocessProfile, postprocess_docx
@@ -33,6 +35,12 @@ class ConversionResult:
     stdout: str
     stderr: str
     warnings: tuple[str, ...] = ()
+    review_markdown_path: Path | None = None
+    review_json_path: Path | None = None
+    review_error_count: int = 0
+    review_warning_count: int = 0
+    ai_review_bundle_dir: Path | None = None
+    ai_review_prompt_path: Path | None = None
 
 
 class ConversionError(RuntimeError):
@@ -55,6 +63,12 @@ def convert_project(config: ConversionConfig) -> ConversionResult:
     command: list[str] = []
     postprocess_warnings: tuple[str, ...] = ()
     postprocess_notes: tuple[str, ...] = ()
+    review_report: ReviewReport | None = None
+    review_warnings: tuple[str, ...] = ()
+    review_notes: tuple[str, ...] = ()
+    ai_bundle: AiReviewBundle | None = None
+    ai_bundle_warnings: tuple[str, ...] = ()
+    ai_bundle_notes: tuple[str, ...] = ()
     with prepare_tjuthesis_input(normalized.project_dir, normalized.main_tex) as prepared:
         with tempfile.TemporaryDirectory(prefix="latex-docx-csl-") as csl_tmp:
             pandoc_config, csl_notes = prepare_csl_for_pandoc(normalized, Path(csl_tmp))
@@ -94,6 +108,36 @@ def convert_project(config: ConversionConfig) -> ConversionResult:
             postprocess_warnings = postprocess.warnings
             postprocess_notes = postprocess.notes
 
+        if process.returncode == 0 and normalized.output_docx.exists():
+            try:
+                review_report = review_docx(normalized.output_docx, normalized.output_docx.parent / "review")
+                review_notes = (
+                    f"Review report: {review_report.markdown_path}",
+                    f"Review summary: {review_report.error_count} errors, {review_report.warning_count} warnings.",
+                )
+            except Exception as exc:
+                review_warnings = (f"DOCX review failed: {exc}",)
+
+        if process.returncode == 0 and normalized.output_docx.exists():
+            try:
+                ai_bundle = build_ai_review_bundle(
+                    output_docx=normalized.output_docx,
+                    project_dir=normalized.project_dir,
+                    main_tex=normalized.main_tex,
+                    log_path=log_path,
+                    review_report=review_report,
+                    bibliography=normalized.bibliography,
+                    csl=normalized.csl,
+                    reference_docx=normalized.reference_docx,
+                    citation_audit=citation_audit,
+                )
+                ai_bundle_notes = (
+                    f"AI review bundle: {ai_bundle.bundle_dir}",
+                    f"AI review prompt: {ai_bundle.prompt_path}",
+                )
+            except Exception as exc:
+                ai_bundle_warnings = (f"AI review bundle generation failed: {exc}",)
+
         write_log(
             log_path,
             command,
@@ -105,11 +149,15 @@ def convert_project(config: ConversionConfig) -> ConversionResult:
                 *prepared.notes,
                 *csl_notes,
                 *postprocess_notes,
+                *review_notes,
+                *ai_bundle_notes,
             ),
             warnings=(
                 *prepared.warnings,
                 *citation_audit.warnings,
                 *postprocess_warnings,
+                *review_warnings,
+                *ai_bundle_warnings,
             ),
         )
 
@@ -130,7 +178,15 @@ def convert_project(config: ConversionConfig) -> ConversionResult:
             *prepared.warnings,
             *citation_audit.warnings,
             *postprocess_warnings,
+            *review_warnings,
+            *ai_bundle_warnings,
         ),
+        review_markdown_path=review_report.markdown_path if review_report is not None else None,
+        review_json_path=review_report.json_path if review_report is not None else None,
+        review_error_count=review_report.error_count if review_report is not None else 0,
+        review_warning_count=review_report.warning_count if review_report is not None else 0,
+        ai_review_bundle_dir=ai_bundle.bundle_dir if ai_bundle is not None else None,
+        ai_review_prompt_path=ai_bundle.prompt_path if ai_bundle is not None else None,
     )
 
 

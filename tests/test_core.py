@@ -5,6 +5,7 @@ import unittest
 from zipfile import ZIP_DEFLATED, ZipFile
 import xml.etree.ElementTree as ET
 
+from latex_docx_converter.ai_review_bundle import build_ai_review_bundle
 from latex_docx_converter.citation import audit_citations
 from latex_docx_converter.converter import (
     ConversionConfig,
@@ -15,6 +16,7 @@ from latex_docx_converter.converter import (
     resolve_export_docx,
 )
 from latex_docx_converter.defaults import find_default_bibliography, find_default_csl, find_default_reference_docx
+from latex_docx_converter.docx_review import review_docx
 from latex_docx_converter.scanner import find_main_tex_candidates
 from latex_docx_converter.tjuthesis import (
     build_expanded_tex,
@@ -588,6 +590,103 @@ class WordPostprocessTests(unittest.TestCase):
             self.assertNotIn("请复制粘贴学校 Word 模板", document_xml)
             self.assertIsNone(paragraph_style(docx, "本科生毕业设计"))
             self.assertIsNone(paragraph_style(docx, "独创性声明"))
+
+
+class DocxReviewTests(unittest.TestCase):
+    def test_review_writes_reports_and_flags_heading_caption_reference_issues(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            docx = Path(tmp) / "bad.docx"
+            create_minimal_docx(
+                docx,
+                [
+                    ("第一章 绪论", "2"),
+                    ("1.1 研究背景", "3"),
+                    ("图2-1 系统架构图", None),
+                    ("参考文献", "3"),
+                    ("[1] ZHANG SAN, LI SI, WANG WU, 等. Dust study[J]. Journal, 2024.", None),
+                    ("[3] Chen K. Another study[J]. Journal, 2024.", None),
+                ],
+            )
+
+            report = review_docx(docx, Path(tmp) / "review")
+            rule_ids = {issue.rule_id for issue in report.issues}
+
+            self.assertTrue(report.markdown_path.is_file())
+            self.assertTrue(report.json_path.is_file())
+            self.assertGreater(report.error_count, 0)
+            self.assertIn("heading.chapter.style", rule_ids)
+            self.assertIn("heading.chapter.number_space", rule_ids)
+            self.assertIn("heading.section.number_space", rule_ids)
+            self.assertIn("caption.style", rule_ids)
+            self.assertIn("backmatter.style", rule_ids)
+            self.assertIn("bibliography.number.sequence", rule_ids)
+            self.assertIn("bibliography.english.et_al", rule_ids)
+            self.assertIn("bibliography.english.case", rule_ids)
+            self.assertIn("# DOCX 格式检查报告", report.markdown_path.read_text(encoding="utf-8"))
+
+    def test_review_accepts_postprocessed_core_format(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            docx = Path(tmp) / "good.docx"
+            create_minimal_docx(
+                docx,
+                [
+                    ("摘 要", "36"),
+                    ("摘要内容。", "40"),
+                    ("关键词：粉尘，施工", "40"),
+                    ("ABSTRACT", "36"),
+                    ("English abstract.", "40"),
+                    ("KEY WORDS: Dust; Construction", "40"),
+                    ("目 录", "36"),
+                    ("第一章 绪论", "2"),
+                    ("1.1 研究背景", "3"),
+                    ("1.1.1 研究意义", "4"),
+                    ("图1-1 系统架构图", None),
+                    ("参考文献", "36"),
+                    ("[1] Yan H, Ding G, Li H, et al. Dust study[J]. Journal, 2024.", None),
+                ],
+            )
+
+            postprocess_docx(docx, WordPostprocessProfile())
+            report = review_docx(docx, Path(tmp) / "review")
+            error_rule_ids = {issue.rule_id for issue in report.issues if issue.severity == "error"}
+
+            self.assertNotIn("heading.chapter.style", error_rule_ids)
+            self.assertNotIn("heading.section.number_space", error_rule_ids)
+            self.assertNotIn("caption.style", error_rule_ids)
+            self.assertNotIn("backmatter.before", error_rule_ids)
+            self.assertNotIn("bibliography.english.et_al", error_rule_ids)
+
+
+class AiReviewBundleTests(unittest.TestCase):
+    def test_builds_ai_review_bundle_with_prompt_and_sources(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            main = root / "main.tex"
+            main.write_text(
+                "\\documentclass{article}\n\\begin{document}\n正文引用\\cite{known}。\n\\end{document}",
+                encoding="utf-8",
+            )
+            bib = root / "reference.bib"
+            bib.write_text("@article{known, title={T}}", encoding="utf-8")
+            docx = root / "out.docx"
+            create_minimal_docx(docx, [("第一章 绪论", "2"), ("参考文献", "36")])
+
+            bundle = build_ai_review_bundle(
+                output_docx=docx,
+                project_dir=root,
+                main_tex=main,
+                bibliography=bib,
+            )
+
+            self.assertTrue(bundle.context_path.is_file())
+            self.assertTrue(bundle.docx_structure_path.is_file())
+            self.assertTrue(bundle.latex_sources_path.is_file())
+            self.assertTrue(bundle.bibliography_summary_path.is_file())
+            self.assertTrue(bundle.prompt_path.is_file())
+            self.assertIn("天津大学本科毕业论文 AI 综合 Review Prompt", bundle.prompt_path.read_text(encoding="utf-8"))
+            self.assertIn("main.tex", bundle.latex_sources_path.read_text(encoding="utf-8"))
+            self.assertIn("known", bundle.bibliography_summary_path.read_text(encoding="utf-8"))
+            self.assertIn("paragraph_count", bundle.docx_structure_path.read_text(encoding="utf-8"))
 
 
 def create_minimal_docx(path: Path, paragraphs: list[tuple[str, str | None]]) -> None:

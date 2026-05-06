@@ -13,6 +13,8 @@
 - TJUThesis 模式下会执行 Word 后处理：插入可更新目录字段、套用天津大学模板关键样式、移动参考文献条目到“参考文献”标题下。
 - 自动发现常用默认文件：项目中的 `reference.bib`、桌面 `编写latex` 目录下的 GB/T 7714 CSL 和天津大学 Word 模板。
 - 每次导出都会在项目目录下的 `docx导出/` 中创建一个独立时间戳目录，DOCX 和日志都保存在该目录内，方便和 LaTeX 源文件分开管理。
+- 导出后自动生成 DOCX 格式检查报告，也可以在界面中单独选择已有 `.docx` 进行检查。
+- 导出后自动生成 AI 审稿包，包含 DOCX 结构、LaTeX 源码摘录、参考文献摘要和可复制给 AI 工具的 prompt。
 
 ## 安装与运行
 
@@ -45,7 +47,14 @@ latex-docx-converter
 ```text
 论文项目/docx导出/时间戳-主文件名/主文件名.docx
 论文项目/docx导出/时间戳-主文件名/logs/主文件名-pandoc.log
+论文项目/docx导出/时间戳-主文件名/review/report.md
+论文项目/docx导出/时间戳-主文件名/review/report.json
+论文项目/docx导出/时间戳-主文件名/ai-review-bundle/prompt.md
 ```
+
+格式检查第一版会检查标题、摘要、目录字段、图表题注、公式编号、参考文献和参考文献/附录/致谢标题等可从 DOCX 结构中稳定识别的规则。它只做格式 review，不判断论文内容质量。
+
+AI 审稿包不会自动调用在线模型，也不需要 API key。你可以打开 `ai-review-bundle/prompt.md`，把它连同同目录材料交给 Codex、Cursor 或 Claude 做第二层综合 review。
 
 ## 已知限制
 

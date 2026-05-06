@@ -7,8 +7,10 @@ import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+from .ai_review_bundle import build_ai_review_bundle
 from .converter import ConversionConfig, ConversionError, convert_project, resolve_export_docx
 from .defaults import find_default_bibliography, find_default_csl, find_default_reference_docx
+from .docx_review import review_docx
 from .pandoc_manager import PandocInstallError, check_pandoc, ensure_pandoc
 from .scanner import find_main_tex_candidates
 
@@ -79,8 +81,12 @@ class ConverterApp(tk.Tk):
         actions.grid(row=9, column=0, columnspan=3, sticky="ew", pady=(14, 0))
         actions.columnconfigure(0, weight=1)
         ttk.Button(actions, text="清空日志", command=self._clear_log).grid(row=0, column=1, padx=(0, 8))
+        self.review_button = ttk.Button(actions, text="检查现有 DOCX", command=self._review_existing_docx_in_background)
+        self.review_button.grid(row=0, column=2, padx=(0, 8))
+        self.ai_bundle_button = ttk.Button(actions, text="生成 AI 审稿包", command=self._ai_bundle_in_background)
+        self.ai_bundle_button.grid(row=0, column=3, padx=(0, 8))
         self.convert_button = ttk.Button(actions, text="开始导出 DOCX", command=self._convert_in_background)
-        self.convert_button.grid(row=0, column=2)
+        self.convert_button.grid(row=0, column=4)
 
     def _add_path_row(
         self,
@@ -227,6 +233,74 @@ class ConverterApp(tk.Tk):
         except Exception as exc:
             self._events.put(("convert_error", f"未知错误：{exc}"))
 
+    def _review_existing_docx_in_background(self) -> None:
+        if self._is_busy:
+            return
+        selected = filedialog.askopenfilename(
+            title="选择要检查的 DOCX",
+            initialdir=self.project_dir.get() or str(Path.home()),
+            filetypes=[("Word documents", "*.docx"), ("All files", "*.*")],
+        )
+        if not selected:
+            return
+        self._set_busy(True)
+        self._log(f"开始检查 DOCX：{selected}")
+        thread = threading.Thread(target=self._review_existing_docx_worker, args=(Path(selected),), daemon=True)
+        thread.start()
+
+    def _review_existing_docx_worker(self, docx_path: Path) -> None:
+        try:
+            report = review_docx(docx_path, docx_path.parent / "review")
+            self._events.put(("reviewed", report))
+        except Exception as exc:
+            self._events.put(("review_error", f"DOCX 检查失败：{exc}"))
+
+    def _ai_bundle_in_background(self) -> None:
+        if self._is_busy:
+            return
+        selected = filedialog.askopenfilename(
+            title="选择要生成审稿包的 DOCX",
+            initialdir=self.project_dir.get() or str(Path.home()),
+            filetypes=[("Word documents", "*.docx"), ("All files", "*.*")],
+        )
+        if not selected:
+            return
+        project_dir = Path(self.project_dir.get().strip()) if self.project_dir.get().strip() else None
+        main_tex = Path(self.main_tex.get().strip()) if self.main_tex.get().strip() else None
+        bibliography = self._optional_path(self.bibliography)
+        csl = self._optional_path(self.csl)
+        reference_docx = self._optional_path(self.reference_docx)
+        self._set_busy(True)
+        self._log(f"开始生成 AI 审稿包：{selected}")
+        thread = threading.Thread(
+            target=self._ai_bundle_worker,
+            args=(Path(selected), project_dir, main_tex, bibliography, csl, reference_docx),
+            daemon=True,
+        )
+        thread.start()
+
+    def _ai_bundle_worker(
+        self,
+        docx_path: Path,
+        project_dir: Path | None,
+        main_tex: Path | None,
+        bibliography: Path | None,
+        csl: Path | None,
+        reference_docx: Path | None,
+    ) -> None:
+        try:
+            bundle = build_ai_review_bundle(
+                output_docx=docx_path,
+                project_dir=project_dir,
+                main_tex=main_tex,
+                bibliography=bibliography,
+                csl=csl,
+                reference_docx=reference_docx,
+            )
+            self._events.put(("ai_bundle", bundle))
+        except Exception as exc:
+            self._events.put(("ai_bundle_error", f"AI 审稿包生成失败：{exc}"))
+
     def _read_config(self) -> ConversionConfig:
         if not self.project_dir.get().strip():
             raise ValueError("请选择 LaTeX 项目文件夹。")
@@ -265,12 +339,56 @@ class ConverterApp(tk.Tk):
                     result = payload
                     self._log(f"导出完成：{result.output_docx}")
                     self._log(f"日志文件：{result.log_path}")
+                    if result.review_markdown_path is not None:
+                        self._log(f"格式检查报告：{result.review_markdown_path}")
+                        self._log(
+                            f"格式检查摘要：发现 {result.review_error_count} 个严重问题，"
+                            f"{result.review_warning_count} 个警告。"
+                        )
+                    if result.ai_review_bundle_dir is not None:
+                        self._log(f"AI 审稿包：{result.ai_review_bundle_dir}")
+                        self._log(f"AI 审稿 Prompt：{result.ai_review_prompt_path}")
                     for warning in result.warnings:
                         self._log(f"警告：{warning}")
                     message = f"DOCX 已生成：\n{result.output_docx}\n\n日志文件：\n{result.log_path}"
+                    if result.review_markdown_path is not None:
+                        message += (
+                            f"\n\n格式检查报告：\n{result.review_markdown_path}"
+                            f"\n\n发现 {result.review_error_count} 个严重问题，"
+                            f"{result.review_warning_count} 个警告。"
+                        )
+                    if result.ai_review_bundle_dir is not None:
+                        message += f"\n\nAI 审稿包：\n{result.ai_review_bundle_dir}"
                     if result.warnings:
                         message += "\n\n有警告，请查看转换日志。"
                     messagebox.showinfo("导出完成", message)
+                    self._set_busy(False)
+                elif event == "reviewed":
+                    report = payload
+                    self._log(f"格式检查完成：{report.markdown_path}")
+                    self._log(f"格式检查摘要：发现 {report.error_count} 个严重问题，{report.warning_count} 个警告。")
+                    messagebox.showinfo(
+                        "检查完成",
+                        f"格式检查报告：\n{report.markdown_path}\n\n"
+                        f"发现 {report.error_count} 个严重问题，{report.warning_count} 个警告。",
+                    )
+                    self._set_busy(False)
+                elif event == "review_error":
+                    self._log(str(payload))
+                    messagebox.showerror("检查失败", str(payload))
+                    self._set_busy(False)
+                elif event == "ai_bundle":
+                    bundle = payload
+                    self._log(f"AI 审稿包生成完成：{bundle.bundle_dir}")
+                    self._log(f"可复制 Prompt：{bundle.prompt_path}")
+                    messagebox.showinfo(
+                        "审稿包生成完成",
+                        f"AI 审稿包：\n{bundle.bundle_dir}\n\n可复制 Prompt：\n{bundle.prompt_path}",
+                    )
+                    self._set_busy(False)
+                elif event == "ai_bundle_error":
+                    self._log(str(payload))
+                    messagebox.showerror("审稿包生成失败", str(payload))
                     self._set_busy(False)
                 elif event == "convert_error":
                     self._log(str(payload))
@@ -284,6 +402,8 @@ class ConverterApp(tk.Tk):
         self._is_busy = busy
         state = tk.DISABLED if busy else tk.NORMAL
         self.convert_button.configure(state=state)
+        self.review_button.configure(state=state)
+        self.ai_bundle_button.configure(state=state)
 
     def _log(self, message: str) -> None:
         self.log_text.insert(tk.END, message + "\n")
