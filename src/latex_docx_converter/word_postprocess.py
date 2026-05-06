@@ -356,6 +356,8 @@ def process_styles_xml(styles_xml: bytes) -> bytes:
         ppr = style.find("w:pPr", NS)
         if ppr is not None:
             remove_child(ppr, "numPr")
+        if style_id == "37":
+            set_rpr_size(ensure_rpr(style), "30")
     reference_style = root.find("w:style[@w:styleId='44']", NS)
     if reference_style is not None:
         apply_reference_paragraph_format(reference_style)
@@ -526,15 +528,16 @@ def remove_marker_paragraphs(body: ET.Element) -> None:
 
 
 def right_align_equation_numbers(body: ET.Element) -> None:
+    text_width = body_text_width(body)
     for child in list(body):
         if not is_paragraph(child):
             continue
         result = extract_trailing_equation_number(child)
         if result is None:
             continue
-        math_para, number = result
-        table = make_equation_table(math_para, number)
-        body.insert(list(body).index(child), table)
+        math, number = result
+        paragraph = make_equation_number_paragraph(math, number, text_width)
+        body.insert(list(body).index(child), paragraph)
         body.remove(child)
 
 
@@ -564,56 +567,53 @@ def extract_trailing_equation_number(paragraph: ET.Element) -> tuple[ET.Element,
         for child in suffix:
             math.remove(child)
         number = f"({match.group(1)}-{match.group(2)})"
-        return copy.deepcopy(math_para), number
+        return copy.deepcopy(math), number
     return None
 
 
-def make_equation_table(math_para: ET.Element, number: str) -> ET.Element:
-    table = ET.Element(q("tbl"))
-    table.append(make_equation_table_properties())
-    grid = ET.SubElement(table, q("tblGrid"))
-    grid_col = ET.SubElement(grid, q("gridCol"))
-    grid_col.set(q("w"), "8500")
-    grid_col = ET.SubElement(grid, q("gridCol"))
-    grid_col.set(q("w"), "1200")
+def make_equation_number_paragraph(math: ET.Element, number: str, text_width: int) -> ET.Element:
+    paragraph = ET.Element(q("p"))
+    ppr = ensure_ppr(paragraph)
+    tabs = ET.SubElement(ppr, q("tabs"))
+    center_tab = ET.SubElement(tabs, q("tab"))
+    center_tab.set(q("val"), "center")
+    center_tab.set(q("pos"), str(text_width // 2))
+    right_tab = ET.SubElement(tabs, q("tab"))
+    right_tab.set(q("val"), "right")
+    right_tab.set(q("pos"), str(text_width))
+    set_paragraph_alignment(paragraph, "left")
+    set_paragraph_spacing(paragraph, before="120", after="120")
 
-    row = ET.SubElement(table, q("tr"))
-    equation_cell = make_table_cell("8500")
-    number_cell = make_table_cell("1200")
-    row.append(equation_cell)
-    row.append(number_cell)
-
-    equation_paragraph = ET.SubElement(equation_cell, q("p"))
-    set_paragraph_alignment(equation_paragraph, "center")
-    equation_paragraph.append(math_para)
-
-    number_paragraph = ET.SubElement(number_cell, q("p"))
-    set_paragraph_alignment(number_paragraph, "right")
-    run = ET.SubElement(number_paragraph, q("r"))
+    add_tab_run(paragraph)
+    paragraph.append(math)
+    add_tab_run(paragraph)
+    run = ET.SubElement(paragraph, q("r"))
     text_node = ET.SubElement(run, q("t"))
     text_node.text = number
-    return table
+    return paragraph
 
 
-def make_equation_table_properties() -> ET.Element:
-    tbl_pr = ET.Element(q("tblPr"))
-    tbl_w = ET.SubElement(tbl_pr, q("tblW"))
-    tbl_w.set(q("w"), "5000")
-    tbl_w.set(q("type"), "pct")
-    borders = ET.SubElement(tbl_pr, q("tblBorders"))
-    for border_name in ("top", "left", "bottom", "right", "insideH", "insideV"):
-        border = ET.SubElement(borders, q(border_name))
-        border.set(q("val"), "nil")
-    return tbl_pr
+def add_tab_run(paragraph: ET.Element) -> None:
+    run = ET.SubElement(paragraph, q("r"))
+    ET.SubElement(run, q("tab"))
 
 
-def make_table_cell(width: str) -> ET.Element:
-    cell = ET.Element(q("tc"))
-    cell_pr = ET.SubElement(cell, q("tcPr"))
-    cell_w = ET.SubElement(cell_pr, q("tcW"))
-    cell_w.set(q("w"), width)
-    cell_w.set(q("type"), "dxa")
-    return cell
+def body_text_width(body: ET.Element) -> int:
+    sect_pr = find_section_properties(body)
+    if sect_pr is None:
+        return 8311
+    page_size = sect_pr.find("w:pgSz", NS)
+    page_margin = sect_pr.find("w:pgMar", NS)
+    if page_size is None or page_margin is None:
+        return 8311
+    try:
+        page_width = int(page_size.get(q("w"), "0"))
+        left_margin = int(page_margin.get(q("left"), "0"))
+        right_margin = int(page_margin.get(q("right"), "0"))
+    except ValueError:
+        return 8311
+    text_width = page_width - left_margin - right_margin
+    return text_width if text_width > 0 else 8311
 
 
 def ensure_update_fields(settings_xml: bytes | None) -> bytes:
@@ -918,6 +918,15 @@ def set_rpr_format(
     bold: bool = False,
 ) -> None:
     set_rpr_fonts(rpr, east_asia_font, ascii_font)
+    set_rpr_size(rpr, size)
+    if bold:
+        if rpr.find("w:b", NS) is None:
+            rpr.append(ET.Element(q("b")))
+        if rpr.find("w:bCs", NS) is None:
+            rpr.append(ET.Element(q("bCs")))
+
+
+def set_rpr_size(rpr: ET.Element, size: str) -> None:
     sz = rpr.find("w:sz", NS)
     if sz is None:
         sz = ET.Element(q("sz"))
@@ -928,11 +937,6 @@ def set_rpr_format(
         sz_cs = ET.Element(q("szCs"))
         rpr.append(sz_cs)
     sz_cs.set(q("val"), size)
-    if bold:
-        if rpr.find("w:b", NS) is None:
-            rpr.append(ET.Element(q("b")))
-        if rpr.find("w:bCs", NS) is None:
-            rpr.append(ET.Element(q("bCs")))
 
 
 def set_rpr_fonts(rpr: ET.Element, east_asia_font: str, ascii_font: str) -> None:

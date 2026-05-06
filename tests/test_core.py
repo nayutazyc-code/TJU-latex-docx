@@ -379,6 +379,7 @@ class WordPostprocessTests(unittest.TestCase):
             self.assertIn('w:line="400"', document_xml)
             self.assertIn('w:lineRule="exact"', document_xml)
             self.assertIn('w:eastAsia="宋体"', styles_xml)
+            self.assertEqual(style_run_size(docx, "37"), "30")
 
     def test_postprocess_formats_bibliography_entries_with_hanging_indent(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -472,7 +473,7 @@ class WordPostprocessTests(unittest.TestCase):
             self.assertEqual(paragraph_style(docx, "1.1  研究背景"), "38")
             self.assertEqual(paragraph_style(docx, "1.1.1  研究意义"), "39")
 
-    def test_postprocess_moves_equation_number_to_right_cell(self):
+    def test_postprocess_moves_equation_number_to_right_tab_stop(self):
         with tempfile.TemporaryDirectory() as tmp:
             docx = Path(tmp) / "equation.docx"
             create_equation_number_docx(docx)
@@ -480,10 +481,11 @@ class WordPostprocessTests(unittest.TestCase):
             postprocess_docx(docx, WordPostprocessProfile())
             document_xml = read_docx_xml(docx, "word/document.xml")
 
-            self.assertIn("<w:tbl>", document_xml)
+            self.assertNotIn("<w:tbl>", document_xml)
+            self.assertIn('<w:tab w:val="center" w:pos="4155"', document_xml)
+            self.assertIn('<w:tab w:val="right" w:pos="8311"', document_xml)
             self.assertIn("<w:t>(3-1)</w:t>", document_xml)
-            self.assertIn('<w:jc w:val="right"', document_xml)
-            self.assertIn('<w:jc w:val="center"', document_xml)
+            self.assertIn("<w:tab />", document_xml)
             self.assertNotIn("<m:t>(</m:t>", document_xml)
             self.assertNotIn("<m:t>  </m:t>", document_xml)
             self.assertNotIn("<m:t>3</m:t><m:r><m:rPr><m:sty m:val=\"p\" /></m:rPr><m:t>−</m:t>", document_xml)
@@ -643,6 +645,18 @@ def paragraph_first_run_fonts(path: Path, text: str) -> dict[str, str]:
                 return {}
             return {key.rsplit("}", 1)[-1]: value for key, value in fonts.attrib.items() if key.startswith(f"{{{w_ns}}}")}
     return {}
+
+
+def style_run_size(path: Path, style_id: str) -> str | None:
+    ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    w_ns = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    with ZipFile(path) as docx:
+        root = ET.fromstring(docx.read("word/styles.xml"))
+    style = root.find(f"w:style[@w:styleId='{style_id}']", ns)
+    if style is None:
+        return None
+    size = style.find("w:rPr/w:sz", ns)
+    return size.get(f"{{{w_ns}}}val") if size is not None else None
 
 
 def make_paragraph_xml(text: str, style: str | None = None) -> str:
